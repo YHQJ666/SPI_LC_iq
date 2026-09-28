@@ -1,0 +1,21 @@
+# CCS / Eclipse 配置和构建产物（不需要上传）
+.launches/
+.settings/
+Debug/
+Release/
+*.launch
+
+# 编译生成的二进制文件和中间文件
+*.out
+*.map
+*.obj
+*.o
+*.d
+*.bin
+*.hex
+
+# 系统垃圾文件
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
