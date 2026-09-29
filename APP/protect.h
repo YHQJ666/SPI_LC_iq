@@ -33,7 +33,7 @@
 #include "IQmathLib.h"
 #include "dcac_cfg.h"
 
-// 保护总开关在 dcac_cfg.h 的 DCAC_PROTECT_ENABLE
+// 保护总开关在 dcac_cfg.h 的 Protect_Enable
 //   0 = 本模块所有函数直接返回，COMP / Digital Compare / Trip Zone 一概不碰
 //   1 = 正常配置
 // 注意：整个模块都在这个开关下面，不要单独调用里面的函数去绕过它

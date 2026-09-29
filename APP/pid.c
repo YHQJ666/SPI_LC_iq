@@ -7,12 +7,12 @@
  * 积分项的定点处理：
  *   原来的写法是 Ki * err * Ts，每拍乘两次。
  *   定点下更划算也更准的做法是把采样周期折进系数：KiTs = Ki*Ts，
- *   初始化时由 dcac_cfg.h 的 DCAC_KI_KI_TS_DEFAULT 算好（编译期常量），
+ *   初始化时由 dcac_cfg.h 的 KI_I_Ts 算好（编译期常量），
  *   中断里只做一次 _IQmpy(pi->KiTs, err)。
  *   这样做还避免了 err*Ts 先算出来太小的问题：Ts = 50us 在 Q24 里只有
  *   838 个刻度，先乘 Ts 会把误差的有效位数吃掉十几位。
  *
- * 采样周期仍然来自 dcac_cfg.h 的 DCAC_TS_S（20kHz -> 50us），
+ * 采样周期仍然来自 dcac_cfg.h 的 Ts_S（20kHz -> 50us），
  * 换载波频率时 Ki*Ts 会自动跟着变，不用手改
  */
 

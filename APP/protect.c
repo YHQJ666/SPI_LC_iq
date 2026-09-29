@@ -50,7 +50,7 @@ static Uint16 Protect_AmpsToDacCode(_iq amps)
     long code;
 
     // I / IL_FULL_SCALE，Q24 的除法，被除数比除数小，精度最好
-    ratio = _IQdiv(amps, DCAC_IL_FULL_SCALE);
+    ratio = _IQdiv(amps, IL_Full_Scale);
 
     // Vpin = 1.65 + ratio*1.65
     v = PROTECT_SENSE_MID_V + _IQmpy(ratio, PROTECT_SENSE_MID_V);
@@ -141,11 +141,11 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
  * 函数名：Protect_InitOCP
  * 说明：初始化过流保护。先上 ADC bandgap（比较器共用），再配 COMP1/COMP2，
  *       最后给 EPWM1/EPWM2 挂触发链
- *       DCAC_PROTECT_ENABLE = 0 时直接返回，所有相关寄存器保持复位值
+ *       Protect_Enable = 0 时直接返回，所有相关寄存器保持复位值
  *===========================================================================*/
 void Protect_InitOCP(void)
 {
-#if (DCAC_PROTECT_ENABLE == 0)
+#if (Protect_Enable == 0)
     // 保护关掉时什么都不做
     // 关键：COMP、Digital Compare、Trip Zone 全部不配置，
     // 这样即使比较器输入悬空也不会误触发 TZ 把四管封死
@@ -212,7 +212,7 @@ void Protect_InitOCP(void)
  *===========================================================================*/
 void Protect_SetTripLevel(_iq amps)
 {
-#if (DCAC_PROTECT_ENABLE == 0)
+#if (Protect_Enable == 0)
     // 保护关闭，不碰比较器
     (void)amps;
     return;
@@ -241,7 +241,7 @@ void Protect_SetTripLevel(_iq amps)
  *===========================================================================*/
 void Protect_ClearTrip(void)
 {
-#if (DCAC_PROTECT_ENABLE == 0)
+#if (Protect_Enable == 0)
     // 保护关闭，TZ 从来没被配置过，没有锁存要清
     Protect_TripFlag   = 0U;
     Protect_TripSource = 0U;
@@ -277,11 +277,11 @@ void Protect_ClearTrip(void)
  * 函数名：Protect_ForceStop
  * 说明：软件急停，四管全关。置 TZFRC.OST 后立刻清 INT 标志，
  *       所以不会产生 TZ 中断，也不污染 Protect_TripFlag
- *       DCAC_PROTECT_ENABLE = 0 时是空操作，否则一调用就把输出封死了
+ *       Protect_Enable = 0 时是空操作，否则一调用就把输出封死了
  *===========================================================================*/
 void Protect_ForceStop(void)
 {
-#if (DCAC_PROTECT_ENABLE == 0)
+#if (Protect_Enable == 0)
     return;
 #else
     EALLOW;

@@ -29,9 +29,9 @@
 #include "DSP2803x_EPwm_defines.h"
 
 // 载波宏来自 dcac_cfg.h，保证 ePWM / 相位步进 / 控制周期三者自洽
-#define SPWM_TBPRD      (DCAC_TBPRD)
-#define SPWM_CMPA_MID   (DCAC_CMPA_MID)
-#define SPWM_CMPA_SPAN  (DCAC_CMPA_SPAN)
+#define SPWM_TBPRD      (TBPRD)
+#define SPWM_CMPA_MID   (CMPA_Mid)
+#define SPWM_CMPA_SPAN  (CMPA_Span)
 
 /*===========================================================================
  * 函数名：SPWM_ModToCmp

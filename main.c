@@ -30,7 +30,7 @@
  *   Q24 的动态范围只有 ±128，本工程最大的运行量是 80V（电压满量程），
  *   超过 ±128 的中间量（TBPRD/2=750、2*满量程=160）在各自模块里换低 Q 处理
  *
- * 环路模式由 dcac_cfg.h 的 DCAC_LOOP_MODE 选择：0 开环，1 闭环
+ * 环路模式由 dcac_cfg.h 的 Loop_Mode 选择：0 开环，1 闭环
  * 本文件不含并网逻辑（离网模式）
  */
 
@@ -50,7 +50,7 @@ void AdcOffsetSelfCal(void);
 void Adc_Config(void);
 void Gpio_Config(void);
 __interrupt void ADC_ISR(void);
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
 __interrupt void Epwm1_TripIsr(void);
 #endif
 
@@ -62,7 +62,7 @@ __interrupt void Epwm1_TripIsr(void);
 
 // 正弦表 -1 ~ +1，256 点，编译期转成 Q24 整数（_IQ() 是编译期常量折叠）
 // sin_table[i] = _IQ(sin(2*pi*i/256))
-static const _iq sin_table[DCAC_SIN_TABLE_SIZE] =
+static const _iq sin_table[Sin_Table_Size] =
 {
     _IQ(0.0000000f), _IQ(0.0245412f), _IQ(0.0490677f), _IQ(0.0735646f), _IQ(0.0980171f), _IQ(0.1224107f), _IQ(0.1467305f), _IQ(0.1709619f),
     _IQ(0.1950903f), _IQ(0.2191012f), _IQ(0.2429802f), _IQ(0.2667128f), _IQ(0.2902847f), _IQ(0.3136817f), _IQ(0.3368899f), _IQ(0.3598950f),
@@ -106,7 +106,7 @@ volatile _iq  IL   = 0;             // 电感电流 A
 volatile _iq  ICap = 0;             // 电容电流 A = IL - Iout
 volatile _iq  Vref = 0;             // 电压给定 V
 volatile _iq  IRef = 0;             // 电容电流给定 A
-volatile _iq  Mod  = 0;             // 调制比
+volatile _iq  Mod  = 0;             // 瞬时调制比
 volatile Uint32 PhaseAcc = 0;       // 相位累加器：高 8 位查表下标，低 24 位 Q24 小数
 volatile _iq  RefRamp = 0;          // 软启动给定峰值
 
@@ -144,7 +144,7 @@ void main(void)
     SPWM_Init();
     Gpio_Config();
 
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
     // 过流保护先建立，再开中断
     Protect_InitOCP();
 #endif
@@ -155,7 +155,7 @@ void main(void)
     // 那句 __asm("ESTOP0"); for(;;); ，CPU 直接卡死
     EALLOW;
     PieVectTable.ADCINT1     = &ADC_ISR;            // ADC 中断：控制环
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
     PieVectTable.EPWM1_TZINT = &Epwm1_TripIsr;      // 硬件过流
 #endif
     EDIS;
@@ -164,31 +164,31 @@ void main(void)
     // r = w0*Ts/2、q = wc*Ts/2 已经在 dcac_cfg.h 里按编译期常量算成 Q24
     // （w0 = 314 超出 Q24 的动态范围，所以在设计期就折进 r、q，不进运行期），
     // 因此初始化阶段也全是定点运算
-    PR_Design(&PR_V, DCAC_PR_KP_DEFAULT, DCAC_PR_KR_DEFAULT,
-              DCAC_PR_R_IQ, DCAC_PR_Q_IQ);
+    PR_Design(&PR_V, KP_V, KR_V,
+              R_V, Q_V);
     PR_V.Ref = 0;
     PR_V.Fdb = 0;
     PR_V.X1 = 0; PR_V.X2 = 0;
     PR_V.Y1 = 0; PR_V.Y2 = 0;
-    PR_V.OutMin = -DCAC_IREF_MAX;       // 电容电流给定限幅
-    PR_V.OutMax =  DCAC_IREF_MAX;
+    PR_V.OutMin = -Iref_Max;       // 电容电流给定限幅
+    PR_V.OutMax =  Iref_Max;
 
     // 初始化 PI_I：电容电流内环，输出就是调制比
     PI_I.Ref = 0;
     PI_I.Fdb = 0;
-    PI_I.Kp = DCAC_KI_KP_DEFAULT;
-    PI_I.KiTs = DCAC_KI_KI_TS_DEFAULT;  // 积分增益已经折进采样周期 Ki*Ts
+    PI_I.Kp = KP_I;
+    PI_I.KiTs = KI_I_Ts;  // 积分增益已经折进采样周期 Ki*Ts
     PI_I.Integral = 0;
-    PI_I.IntMin = -DCAC_MOD_MAX;
-    PI_I.IntMax =  DCAC_MOD_MAX;
-    PI_I.OutMin = -DCAC_MOD_MAX;
-    PI_I.OutMax =  DCAC_MOD_MAX;
+    PI_I.IntMin = -Mod_Max;
+    PI_I.IntMax =  Mod_Max;
+    PI_I.OutMin = -Mod_Max;
+    PI_I.OutMax =  Mod_Max;
 
     // 开 PIE 和 CPU 中断
     EALLOW;
     PieCtrlRegs.PIEIER1.bit.INTx1 = 1;      // ADCINT1
     IER |= M_INT1;
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
     PieCtrlRegs.PIEIER2.bit.INTx1 = 1;      // EPWM1_TZINT
     IER |= M_INT2;
 #else
@@ -255,30 +255,30 @@ __interrupt void ADC_ISR(void)
     // SOC0 的第一次采样按原设计丢弃，这里从 SOC1 开始读
     // 换算宏展开成 __IQmpy((raw-2048)<<12, 2*满量程(Q17), 17)：
     // (raw-2048)<<12 是 (raw-2048)/4096 的 Q24，乘 2*满量程 正好得到工程量
-    Iout = DCAC_ADC_TO_IQ(AdcResult.ADCRESULT1, DCAC_IOUT_FULL_SCALE_F);
-    Vout = DCAC_ADC_TO_IQ(AdcResult.ADCRESULT2, DCAC_VOUT_FULL_SCALE_F);
-    IL   = DCAC_ADC_TO_IQ(AdcResult.ADCRESULT3, DCAC_IL_FULL_SCALE_F);
+    Iout = ADC_To_IQ(AdcResult.ADCRESULT1, Iout_Full_Scale_F);
+    Vout = ADC_To_IQ(AdcResult.ADCRESULT2, Vout_Full_Scale_F);
+    IL   = ADC_To_IQ(AdcResult.ADCRESULT3, IL_Full_Scale_F);
     ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
 
-#if (DCAC_DEBUG_FIXED_MOD_EN == 1)
+#if (Debug_Fixed_Mod_En == 1)
 
     // 固定调制比调试模式：控制环完全不跑，CMPA 已经在 SPWM_Init 里设成固定值
     // 只验证 ePWM + 死区 + 驱动这一段，连 ADC 结果都不参与
 
 #else
 
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
     // ---- 2. 保护判断，越限就锁存 ----
     // 阈值都是 Q24，定点比较就是整数比较，不需要任何转换
-    if (Vout > DCAC_OV_VOLTS)
+    if (Vout > OV_Volts)
     {
         FaultLatch = FAULT_OVERVOLT;
     }
 
-    if ((IL > DCAC_OC_AMPS) || (IL < -DCAC_OC_AMPS))
+    if ((IL > OC_Amps) || (IL < -OC_Amps))
     {
         OcCnt++;
-        if (OcCnt >= DCAC_OC_DEBOUNCE)
+        if (OcCnt >= OC_Debounce)
         {
             FaultLatch = FAULT_SW_OC;
         }
@@ -293,7 +293,7 @@ __interrupt void ADC_ISR(void)
         FaultLatch = FAULT_HW_OC;
     }
 #else
-    // DCAC_PROTECT_ENABLE = 0：软件保护也一并关掉。
+    // Protect_Enable = 0：软件保护也一并关掉。
     // 这一点很关键：ADCINA2 没接（或电流传感器没上电）时采样恒为 0，
     // 算出来 IL = -30A，按 25A 阈值会立刻误报过流，输出被钉在中点，
     // 表现出来就是"没有 SPWM 输出"
@@ -317,10 +317,10 @@ __interrupt void ADC_ISR(void)
         // 每拍加一个 Q24 步长，定点加法累加不会引入额外误差
         if (Run_Enable != 0U)
         {
-            RefRamp += DCAC_SOFT_START_STEP;
-            if (RefRamp > DCAC_VREF_PEAK)
+            RefRamp += Soft_Start_Step;
+            if (RefRamp > Vref_Peak)
             {
-                RefRamp = DCAC_VREF_PEAK;
+                RefRamp = Vref_Peak;
             }
         }
         else
@@ -330,14 +330,14 @@ __interrupt void ADC_ISR(void)
 
         // ---- 4. 相位累加 + 查表：phase_step = 256*50/20000 = 0.64 ----
         // PhaseAcc 高 8 位是表下标、低 24 位是 Q24 小数，
-        // 与 0x00FFFFFF 相与即对 256 取模，等价于原来的 Phase -= 256
-        PhaseAcc = (PhaseAcc + DCAC_PHASE_STEP_Q24) & DCAC_PHASE_MASK;
-        sin_val = sin_table[(Uint16)(PhaseAcc >> DCAC_PHASE_ACC_BITS)];
+        // 与 0xFFFFFFFF 相与即对 256 取模，等价于原来的 Phase -= 256
+        PhaseAcc = (PhaseAcc + Phase_Step_Q24) & Phase_Mask;
+        sin_val = sin_table[(Uint16)(PhaseAcc >> Phase_Acc_Bits)];
         Vref = _IQmpy(sin_val, RefRamp);
 
         dbgSin =sin_val;
 
-#if (DCAC_LOOP_MODE == DCAC_LOOP_CLOSED)
+#if (Loop_Mode == Loop_Closed)
         // ---- 5. 电压外环 PR -> 电容电流给定 ----
         PR_V.Ref = Vref;
         PR_V.Fdb = Vout;
@@ -348,8 +348,8 @@ __interrupt void ADC_ISR(void)
         PI_I.Fdb = ICap;
         Mod = PI_Calc(&PI_I);
 #else
-        // 开环：调制比直接来自正弦表，不走 PR/PI
-        Mod = _IQmpy(sin_val, DCAC_MOD_AMP_OPEN);
+        // 开环：瞬时调制比直接来自正弦表，不走 PR/PI
+        Mod = _IQmpy(sin_val, Mod_Amp_Open);
         IRef = 0;
         PR_V.X1 = 0; PR_V.X2 = 0;
         PR_V.Y1 = 0; PR_V.Y2 = 0;
@@ -357,13 +357,13 @@ __interrupt void ADC_ISR(void)
 #endif
 
         // ---- 7. 限幅并写 CMPA ----
-        if (Mod > DCAC_MOD_MAX)
+        if (Mod > Mod_Max)
         {
-            Mod = DCAC_MOD_MAX;
+            Mod = Mod_Max;
         }
-        else if (Mod < -DCAC_MOD_MAX)
+        else if (Mod < -Mod_Max)
         {
-            Mod = -DCAC_MOD_MAX;
+            Mod = -Mod_Max;
         }
         SPWM_SetMod(Mod);
     }
@@ -399,10 +399,10 @@ void Adc_Config(void)
     AdcRegs.INTSEL1N2.bit.INT1CONT  = 0;    // 关闭 ADCINT1 连续模式
     AdcRegs.INTSEL1N2.bit.INT1SEL   = 3;    // EOC3 触发 ADCINT1
 
-    AdcRegs.ADCSOC0CTL.bit.CHSEL    = DCAC_ADC_CH_DUMMY;
-    AdcRegs.ADCSOC1CTL.bit.CHSEL    = DCAC_ADC_CH_IOUT;
-    AdcRegs.ADCSOC2CTL.bit.CHSEL    = DCAC_ADC_CH_VOUT;
-    AdcRegs.ADCSOC3CTL.bit.CHSEL    = DCAC_ADC_CH_IL;
+    AdcRegs.ADCSOC0CTL.bit.CHSEL    = ADC_Ch_Dummy;
+    AdcRegs.ADCSOC1CTL.bit.CHSEL    = ADC_Ch_Iout;
+    AdcRegs.ADCSOC2CTL.bit.CHSEL    = ADC_Ch_Vout;
+    AdcRegs.ADCSOC3CTL.bit.CHSEL    = ADC_Ch_IL;
 
     AdcRegs.ADCSOC0CTL.bit.TRIGSEL  = 5;    // EPWM1 SOCA
     AdcRegs.ADCSOC1CTL.bit.TRIGSEL  = 5;
@@ -437,9 +437,9 @@ void Gpio_Config(void)
 //   TZ 已经把四管拉低，这里只做：置标志、故障锁存、关 TZ 中断源、清中断标志
 //   OST/CBC 触发源保持锁存，必须软件 Protect_ClearTrip() 才能恢复输出
 //   关掉 TZEINT 是为了防止故障一直存在导致每个载波周期都进中断
-//   DCAC_PROTECT_ENABLE = 0 时整个函数不编译
+//   Protect_Enable = 0 时整个函数不编译
 //===========================================================================
-#if (DCAC_PROTECT_ENABLE == 1)
+#if (Protect_Enable == 1)
 __interrupt void Epwm1_TripIsr(void)
 {
     Protect_TripFlag = 1U;
