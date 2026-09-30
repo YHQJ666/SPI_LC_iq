@@ -42,11 +42,12 @@
 // ADCA2(COMP1A) 和 ADCA4(COMP2A)。
 // 默认 0：板子只接了一路时必须保持 0，否则 COMP2A 悬空约 0V，
 // 反相输出恒为高 -> TZ 会把四管一直封死，表现为完全没有 SPWM 输出
-#define PROTECT_USE_COMP2_NEGATIVE      (0)
+#define Use_Comp2_Negative  0
 
 // 过流阈值默认值 A（按电感电流传感器量程整定）
-#define PROTECT_TRIP_AMPS_DEFAULT_F     (20.0f)
-#define PROTECT_TRIP_AMPS_DEFAULT       _IQ(PROTECT_TRIP_AMPS_DEFAULT_F)
+// 后缀 _F = 设计期 float 常量，不带后缀的是编译期算好的 Q24（和 dcac_cfg.h 一致）
+#define Trip_Amps_Default_F     10.0f
+#define Trip_Amps_Default       _IQ(Trip_Amps_Default_F)
 
 // 配置比较器 + ePWM 数字比较触发链；必须在 ePWM 初始化之后、开 PWM 之前调用
 void Protect_InitOCP(void);

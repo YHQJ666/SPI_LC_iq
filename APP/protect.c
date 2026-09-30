@@ -23,53 +23,51 @@
 volatile Uint16 Protect_TripFlag   = 0U;
 volatile Uint16 Protect_TripSource = 0U;
 
-// 比较器 DAC 参考电压（VDDA = 3.3V，10bit）
-#define PROTECT_DAC_FS_V_F      (3.3f)
-#define PROTECT_DAC_MAX_CODE    (1023U)
-#define PROTECT_SENSE_MID_V_F   (1.65f)     // 双向电流采样中点
+// COMP 比较器 DAC：参考电压 3.3V、10 位，码值 = Vpin/3.3*1024
+#define DAC_Full_Scale_F    3.3f
+#define DAC_Max_Code        1023U
+// 电感电流调理（和 ADCINA2 同一路）：Vpin = 2.5 + 1mΩ*20*I = 2.5 + 0.02*I
+#define Sense_Offset_F      2.5f       // 双向电流采样零点 V
+#define Sense_Gain_F        0.02f      // 1mΩ * 20 = 0.02 V/A
 
-#define PROTECT_DAC_FS_V        _IQ(PROTECT_DAC_FS_V_F)
-#define PROTECT_SENSE_MID_V     _IQ(PROTECT_SENSE_MID_V_F)
+#define DAC_Full_Scale      _IQ(DAC_Full_Scale_F)
+#define Sense_Offset        _IQ(Sense_Offset_F)
+#define Sense_Gain          _IQ(Sense_Gain_F)
 
-// DAC 码值是 10 位（0~1024），Q24 的比例要乘 1024 = 左移 10 位，
-// 反过来就是右移 24-10 = 14 位。写成移位而不是 _IQmpy 是因为
-// 1024 已经超出 Q24 的动态范围（±128），不能再当 Q24 数用
-#define PROTECT_RATIO_TO_CODE(r)    ((long)((r) >> 14))
+// Q24 比例 -> 10 位 DAC 码：乘 1024 = 左移 10 位，反过来就是右移 24-10 = 14 位。
+// 写成移位而不是 _IQmpy，是因为 1024 超出 Q24 的动态范围（±128），不能再当 Q24 数用
+#define Ratio_To_Code(r)    ((long)((r) >> 14))
 
 /*===========================================================================
  * 函数名：Protect_AmpsToDacCode
  * 说明：把电感电流安培值换算成 COMP DAC 码
- *       Vpin(I) = 1.65 + (I / IL_FULL_SCALE) * 1.65
+ *       Vpin(I) = 2.5 + 0.02*I
  *       code    = Vpin / 3.3 * 1024
- *       amps 为 Q24，先除以满量程得到 Q24 的比例，再乘中点电压
+ *       amps 为 Q24，乘增益加零点即可，不需要除法
  *===========================================================================*/
 static Uint16 Protect_AmpsToDacCode(_iq amps)
 {
-    _iq ratio;
     _iq v;
     long code;
 
-    // I / IL_FULL_SCALE，Q24 的除法，被除数比除数小，精度最好
-    ratio = _IQdiv(amps, IL_Full_Scale);
-
-    // Vpin = 1.65 + ratio*1.65
-    v = PROTECT_SENSE_MID_V + _IQmpy(ratio, PROTECT_SENSE_MID_V);
+    // Vpin = 2.5 + 0.02*I
+    v = Sense_Offset + _IQmpy(amps, Sense_Gain);
 
     if (v < 0)
     {
         v = 0;
     }
-    else if (v > PROTECT_DAC_FS_V)
+    else if (v > DAC_Full_Scale)
     {
-        v = PROTECT_DAC_FS_V;
+        v = DAC_Full_Scale;
     }
 
     // code = v/3.3*1024
-    code = PROTECT_RATIO_TO_CODE(_IQdiv(v, PROTECT_DAC_FS_V));
+    code = Ratio_To_Code(_IQdiv(v, DAC_Full_Scale));
 
-    if (code > (long)PROTECT_DAC_MAX_CODE)
+    if (code > (long)DAC_Max_Code)
     {
-        code = (long)PROTECT_DAC_MAX_CODE;
+        code = (long)DAC_Max_Code;
     }
 
     return (Uint16)code;
@@ -86,7 +84,7 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
     // 数字比较输入选择
     epwm->DCTRIPSEL.bit.DCAHCOMPSEL = DC_COMP1OUT;
     epwm->DCTRIPSEL.bit.DCBHCOMPSEL = DC_COMP1OUT;
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     epwm->DCTRIPSEL.bit.DCALCOMPSEL = DC_COMP2OUT;
     epwm->DCTRIPSEL.bit.DCBLCOMPSEL = DC_COMP2OUT;
 #else
@@ -104,7 +102,7 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
     epwm->DCBCTL.bit.EVT1FRCSYNCSEL = DC_EVT_ASYNC;
 
     // DCAEVT2 / DCBEVT2：COMP2 输出高 = 反向过流
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     epwm->TZDCSEL.bit.DCAEVT2 = TZ_DCAL_HI;
     epwm->TZDCSEL.bit.DCBEVT2 = TZ_DCBL_HI;
 #else
@@ -119,7 +117,7 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
     // 选为触发源
     epwm->TZSEL.bit.DCAEVT1 = 1U;       // 单次(锁存)
     epwm->TZSEL.bit.DCBEVT1 = 1U;
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     epwm->TZSEL.bit.DCAEVT2 = 1U;       // 逐周期(限流)
     epwm->TZSEL.bit.DCBEVT2 = 1U;
 #else
@@ -159,7 +157,7 @@ void Protect_InitOCP(void)
     EALLOW;
     SysCtrlRegs.PCLKCR0.bit.ADCENCLK   = 1;
     SysCtrlRegs.PCLKCR3.bit.COMP1ENCLK = 1;
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     SysCtrlRegs.PCLKCR3.bit.COMP2ENCLK = 1;
 #endif
     AdcRegs.ADCCTL1.bit.ADCBGPWD = 1;
@@ -167,7 +165,7 @@ void Protect_InitOCP(void)
 
     DELAY_US(1000L);
 
-    code = Protect_AmpsToDacCode(PROTECT_TRIP_AMPS_DEFAULT);
+    code = Protect_AmpsToDacCode(Trip_Amps_Default);
 
     // COMP1：正向过流。COMPSOURCE=0 用内部 DAC 做反相输入，CMPINV=0 不反相
     // 即 COMP1A(电感电流) > DAC 阈值 时输出高
@@ -180,7 +178,7 @@ void Protect_InitOCP(void)
     Comp1Regs.DACVAL.bit.DACVAL      = code;
     EDIS;
 
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     // COMP2：反向过流，输出反相，电感电流 < -阈值 时输出高
     EALLOW;
     Comp2Regs.COMPCTL.bit.COMPDACEN  = 1;
@@ -227,7 +225,7 @@ void Protect_SetTripLevel(_iq amps)
 
     EALLOW;
     Comp1Regs.DACVAL.bit.DACVAL = code;
-#if (PROTECT_USE_COMP2_NEGATIVE == 1)
+#if (Use_Comp2_Negative == 1)
     Comp2Regs.DACVAL.bit.DACVAL = code;
 #endif
     EDIS;

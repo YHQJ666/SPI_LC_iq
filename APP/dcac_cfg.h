@@ -105,27 +105,36 @@
 #define ADC_Ch_Vout     1U      // SOC2 -> ADCINA1 输出电压
 #define ADC_Ch_IL       2U      // SOC3 -> ADCINA2 电感电流
 
-// ---- 5. 传感器标定 ----
-// ADC 12 位单极性 0..4095，中点 2048 对应 0A / 0V
-// 工程量 = (raw - 2048) * Full_Scale / 2048
-#define ADC_Mid_Code        2048        // 码值中点
-#define Vout_Full_Scale_F   80.0f
-#define Iout_Full_Scale_F   22.0f
-// 电感电流含电容纹波，量程一般比输出电流大，按实际传感器改
-#define IL_Full_Scale_F     30.0f
+// ---- 5. 采样前端标定 ----
+// 调理电路送到 ADC 引脚的电压 Vpin，12 位 ADC 满码 3.3V、4096 码：
+//   code = Vpin / 3.3 * 4096
+//   电流（IL 和 Iout 调理一样，都是 1mΩ 采样电阻 + 20 倍增益）：
+//     Vpin = 2.5 + 0.001*20*I = 2.5 + 0.02*I
+//     I    = (code - 2.5/3.3*4096) * 3.3/4096/0.02
+//          = (code - 3103) * 40.283mA
+//     满码 4096 对应 3.3/0.02 = 165A，实际 0~4095 码 -> -125A ~ +40A
+//   电压：
+//     Vpin = 1.5 + 0.03125*V
+//     V    = (code - 1.5/3.3*4096) * 3.3/4096/0.03125
+//          = (code - 1862) * 25.781mV
+//     满码 4096 对应 3.3/0.03125 = 105.6V，实际 0~4095 码 -> -48V ~ +57.6V
+// 偏置码 3103.03 / 1861.82 取整，残差只有 1.2mA / 4.7mV，
+// 比 1 个 LSB（电流 40mA、电压 26mV）还小，可以忽略
+#define ADC_IL_Offset       3103        // 电流零点 2.5V 对应的码值
+#define ADC_IL_Span         165.0f      // 满码 4096 对应 165A
+#define ADC_Iout_Offset     3103
+#define ADC_Iout_Span       165.0f
+#define ADC_Vout_Offset     1862        // 电压零点 1.5V 对应的码值
+#define ADC_Vout_Span       105.6f      // 满码 4096 对应 105.6V
 
-// 一次采样换算的定点写法（以电压为例）：
-//   a = raw - 2048          ∈ [-2048, 2047]，整数
-//   a << 12                 = a/4096 的 Q24，最大 8.4e6，不会溢出 32 位
-//   再乘 2*Full_Scale       即得 a*Full_Scale/2048 的 Q24
-// 2*80 = 160 超过 Q24 的 ±128，所以系数用 Q17 存，
-// 用 __IQmpy(A,B,Q) = (A*B)>>Q：A 是 Q24、B 是 Q17 时结果正好还是 Q24
-#define ADC_Scale_Q17(fs)   ((long)((fs) * 2.0f * 131072.0f))
-#define ADC_To_IQ(raw, fs) \
-    __IQmpy((_iq)(((long)(raw) - (long)ADC_Mid_Code) << 12), ADC_Scale_Q17(fs), 17)
-
-// 电感电流满量程另外留一份 Q24 的（30 < 128 装得下），保护模块换 DAC 码要用
-#define IL_Full_Scale       _IQ(IL_Full_Scale_F)
+// 定点换算 value = (raw - Offset) * Span / 4096：
+//   (raw-Offset) << 12   = (raw-Offset)/4096 的 Q24，最大 3103*4096 = 1.3e7，不溢出
+//   Span 乘 2^17 做成 Q17 常量：165 * 131072 = 2.16e7，32 位装得下
+//   __IQmpy(A,B,Q) = (A*B)>>Q，Q24 × Q17 >> 17 的结果正好还是 Q24
+// Span 本身超过 Q24 的 ±128（165），所以只能走 Q17，不能写成 _IQmpy
+#define ADC_Scale_Q17(span) ((long)((span) * 131072.0f))
+#define ADC_To_IQ(raw, off, span) \
+    __IQmpy((_iq)(((long)(raw) - (long)(off)) << 12), ADC_Scale_Q17(span), 17)
 
 // ---- 6. 控制环参数（待整定） ----
 #define W0_V_F          314.159265f     // 电压环 2*pi*50 谐振角频率
@@ -180,5 +189,15 @@
 // 用它判断两件事：有没有脉冲 = ADC 中断在不在跑；脉宽 = 控制环耗时
 // 定点化以后控制环应该明显快于原来的软件浮点版本，可以直接用脉宽对比
 #define ISR_Test_Pin    4U
+
+// ---- 10. 调试器观察用浮点镜像 ----
+// 控制量都是 Q24，调试器里显示的是原始整数（真值 = 原始整数 / 16777216），
+// 看着不直观。置 1 时在后台死循环里把它们换算成工程量存进 main.c 的
+// Debug_View，调试器里把 Debug_View 加进 Expressions 展开就是 V / A / 调制比。
+// 换算只在后台空转的循环里做，20kHz 中断里一次都不做，不影响控制时序；
+// 置 0 时 Debug_View 和换算代码都不编译，不占 Flash 也不多跑一条指令
+#define Debug_Float_View    1
+// 后台循环每转多少圈折算一次：调小刷新快、后台占用高
+#define Debug_Div           256U
 
 #endif

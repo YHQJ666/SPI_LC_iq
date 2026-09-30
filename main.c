@@ -119,6 +119,37 @@ volatile Uint16 FaultLatch = FAULT_NONE;
 volatile Uint16 OcCnt = 0U;         // 软件过流去抖计数
 volatile Uint16 IsrCnt = 0U;        // 中断次数，调试观察用
 
+#if (Debug_Float_View == 1)
+//===========================================================================
+// 调试器观察用浮点镜像
+//   上面的控制量都是 Q24 定点，调试器里显示的是原始整数（真值 = 值/16777216）。
+//   这里把同一批量换算成工程量存一份 float，调试器里把 Debug_View 加进
+//   Expressions 再展开，看到的就是 V / A / 调制比。
+//   换算全部在后台死循环里做（每 Debug_Div 圈折算一次），20kHz 中断里
+//   一次都不做，所以不影响控制时序和中断耗时。
+//   注意：这些值只给调试器看，控制环不用它们
+//===========================================================================
+volatile struct
+{
+    float Vout;         // 输出电压 V
+    float Iout;         // 输出电流 A
+    float IL;           // 电感电流 A
+    float ICap;         // 电容电流 A = IL - Iout
+    float Vref;         // 电压给定 V
+    float IRef;         // 电容电流给定 A
+    float RefRamp;      // 软启动给定峰值 V
+    float Mod;          // 调制比
+    float Phase;        // 相位累加器（换算成正弦表下标 0~256）
+    float PR_Err;       // 电压环误差 V
+    float PR_Out;       // 电压环输出（电容电流给定）A
+    float PI_Err;       // 电流环误差 A
+    float PI_Integral;  // 电流环积分项
+    float PI_Out;       // 电流环输出（调制比）
+} Debug_View;
+
+static Uint16 Debug_Count = 0U;     // 后台循环分频计数
+#endif
+
 //===========================================================================
 // 主函数入口
 //===========================================================================
@@ -238,6 +269,30 @@ void main(void)
             RefRamp = 0;
             PhaseAcc = 0U;
         }
+
+#if (Debug_Float_View == 1)
+        // Q24 -> 工程量的调试镜像。后台循环是空转的，这里分频折算，
+        // 别把 CPU 全吃在调试换算上（要更快就把 Debug_Div 调小）
+        if (++Debug_Count >= Debug_Div)
+        {
+            Debug_Count = 0U;
+
+            Debug_View.Vout        = _IQtoF(Vout);
+            Debug_View.Iout        = _IQtoF(Iout);
+            Debug_View.IL          = _IQtoF(IL);
+            Debug_View.ICap        = _IQtoF(ICap);
+            Debug_View.Vref        = _IQtoF(Vref);
+            Debug_View.IRef        = _IQtoF(IRef);
+            Debug_View.RefRamp     = _IQtoF(RefRamp);
+            Debug_View.Mod         = _IQtoF(Mod);
+            Debug_View.Phase       = (float)PhaseAcc / 16777216.0f;
+            Debug_View.PR_Err      = _IQtoF(PR_V.Err);
+            Debug_View.PR_Out      = _IQtoF(PR_V.Out);
+            Debug_View.PI_Err      = _IQtoF(PI_I.Err);
+            Debug_View.PI_Integral = _IQtoF(PI_I.Integral);
+            Debug_View.PI_Out      = _IQtoF(PI_I.Out);
+        }
+#endif
     }
 }
 
@@ -253,11 +308,11 @@ __interrupt void ADC_ISR(void)
 
     // ---- 1. 采样并换算工程量 ----
     // SOC0 的第一次采样按原设计丢弃，这里从 SOC1 开始读
-    // 换算宏展开成 __IQmpy((raw-2048)<<12, 2*满量程(Q17), 17)：
-    // (raw-2048)<<12 是 (raw-2048)/4096 的 Q24，乘 2*满量程 正好得到工程量
-    Iout = ADC_To_IQ(AdcResult.ADCRESULT1, Iout_Full_Scale_F);
-    Vout = ADC_To_IQ(AdcResult.ADCRESULT2, Vout_Full_Scale_F);
-    IL   = ADC_To_IQ(AdcResult.ADCRESULT3, IL_Full_Scale_F);
+    // 每个通道的零点码和满码量程在 dcac_cfg.h 里按调理电路标定，
+    // 换算宏展开成 __IQmpy((raw-零点码)<<12, 量程(Q17), 17)
+    Iout = ADC_To_IQ(AdcResult.ADCRESULT1, ADC_Iout_Offset, ADC_Iout_Span);
+    Vout = ADC_To_IQ(AdcResult.ADCRESULT2, ADC_Vout_Offset, ADC_Vout_Span);
+    IL   = ADC_To_IQ(AdcResult.ADCRESULT3, ADC_IL_Offset, ADC_IL_Span);
     ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
 
 #if (Debug_Fixed_Mod_En == 1)
