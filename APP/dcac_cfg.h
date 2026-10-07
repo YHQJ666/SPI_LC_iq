@@ -48,17 +48,19 @@
 #define Loop_Open       0
 #define Loop_Closed     1
 // 0 = 开环（只出正弦，不走 PR/PI），1 = 闭环（电压外环 PR + 电容电流内环 PI）
-#define Loop_Mode       0
+#define Loop_Mode       1
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----
 // ePWM 增减计数：fsw = TBCLK / (2 * TBPRD)
 //   TBCLK = 60MHz, TBPRD = 1500 -> fsw = 20kHz
 //   TBCLK = 60MHz, TBPRD = 3000 -> fsw = 10kHz
 // 单极性倍频：两个桥臂共用一个三角载波，各用一个比较值
-//   EPWM1.CMPA = TBPRD/2 * (1 + mod)   左桥臂，占空 dA = (1 + mod)/2
-//   EPWM2.CMPA = TBPRD/2 * (1 - mod)   右桥臂，占空 dB = (1 - mod)/2
+//   引脚按走线方便分配：GPIO0/1 = PWM1AB = 右桥臂（EPWM1），
+//                       GPIO2/3 = PWM2AB = 左桥臂（EPWM2）
+//   EPWM1.CMPA = TBPRD/2 * (1 - mod)   右桥臂，占空 dR = (1 - mod)/2
+//   EPWM2.CMPA = TBPRD/2 * (1 + mod)   左桥臂，占空 dL = (1 + mod)/2
 //   TBPRD=3000 时即 1500 +- mod*1500
-//   uAB = (dA - dB)*Vdc = mod*Vdc，电平只有 +Vdc/0/-Vdc，
+//   uAB = (dL - dR)*Vdc = mod*Vdc，电平只有 +Vdc/0/-Vdc，
 //   每个载波周期两个脉冲，等效开关频率 = 2*fsw
 #define TBCLK_Hz        60000000L
 #define TBPRD           1500U

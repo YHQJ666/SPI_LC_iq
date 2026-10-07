@@ -127,8 +127,8 @@ void SPWM_Init(void)
 /*===========================================================================
  * 函数名：SPWM_SetMod
  * 说明：单极性倍频的两个比较值
- *         cmpA = TBPRD/2 * (1 + mod)   左桥臂 EPWM1
- *         cmpB = TBPRD/2 * (1 - mod)   右桥臂 EPWM2
+ *         cmpA = TBPRD/2 * (1 - mod)   右桥臂 EPWM1（GPIO0/1）
+ *         cmpB = TBPRD/2 * (1 + mod)   左桥臂 EPWM2（GPIO2/3）
  *       两者之和恒等于 TBPRD，于是 dA + dB = 1，
  *       uAB = (dA - dB)*Vdc = mod*Vdc，且只有 +Vdc/0/-Vdc 三种电平
  *       mod 是 Q24，超出 ±1 先限幅（定点比较就是整数比较）
@@ -146,8 +146,9 @@ void SPWM_SetMod(_iq mod)
     }
 
 
-    EPwm1Regs.CMPA.half.CMPA = SPWM_ModToCmp(mod);
-    EPwm2Regs.CMPA.half.CMPA = SPWM_ModToCmp(-mod);
+    // 引脚分配：GPIO0/1 = PWM1AB = 右桥臂，GPIO2/3 = PWM2AB = 左桥臂
+    EPwm1Regs.CMPA.half.CMPA = SPWM_ModToCmp(-mod);    // 右桥臂 d = (1 - mod)/2
+    EPwm2Regs.CMPA.half.CMPA = SPWM_ModToCmp(mod);     // 左桥臂 d = (1 + mod)/2
 }
 
 /*===========================================================================
@@ -161,7 +162,7 @@ void SPWM_SetNeutral(void)
 
 /*===========================================================================
  * 函数名：SPWM_GetCmp
- * 说明：读回左桥臂当前 CMPA，调试观察用
+ * 说明：读回右桥臂（EPWM1，GPIO0/1）当前 CMPA，调试观察用
  *===========================================================================*/
 Uint16 SPWM_GetCmp(void)
 {

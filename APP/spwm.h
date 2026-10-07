@@ -7,8 +7,8 @@
  *   载波   : EPWM1 增减计数 TBPRD=1500，EPWM2 与 EPWM1 同步、同周期，
  *            两个桥臂共用这一路三角载波
  *   调制波 : 左桥臂 sinθ，右桥臂 -sinθ，共用一个 256 点正弦表
- *   比较值 : cmpA = TBPRD/2 * (1 + m*sinθ)   左桥臂
- *            cmpB = TBPRD/2 * (1 - m*sinθ)   右桥臂
+ *   比较值 : cmpA = TBPRD/2 * (1 - m*sinθ)   右桥臂（EPWM1，GPIO0/1）
+ *            cmpB = TBPRD/2 * (1 + m*sinθ)   左桥臂（EPWM2，GPIO2/3）
  *            两者之和恒等于 TBPRD
  *   动作   : AQCTLA/AQCTLB 都写成 CAU=CLEAR, CAD=SET
  *            -> 占空 = CMPA/TBPRD，且 B 是 A 的互补
@@ -16,13 +16,13 @@
  *            每个桥臂上下管互补并插入 300ns 死区
  *
  * 引脚与占空：
- *   GPIO0 = EPWM1A 左桥臂上管，占空 dA = cmpA/TBPRD = (1 + m*sinθ)/2
- *   GPIO1 = EPWM1B 左桥臂下管，与 GPIO0 互补（含死区）
- *   GPIO2 = EPWM2A 右桥臂上管，占空 dB = cmpB/TBPRD = (1 - m*sinθ)/2
- *   GPIO3 = EPWM2B 右桥臂下管，与 GPIO2 互补（含死区）
+ *   GPIO0 = EPWM1A 右桥臂上管，占空 dR = cmpA/TBPRD = (1 - m*sinθ)/2
+ *   GPIO1 = EPWM1B 右桥臂下管，与 GPIO0 互补（含死区）
+ *   GPIO2 = EPWM2A 左桥臂上管，占空 dL = cmpB/TBPRD = (1 + m*sinθ)/2
+ *   GPIO3 = EPWM2B 左桥臂下管，与 GPIO2 互补（含死区）
  *
  * 输出合成：
- *   uAB = uA - uB = (dA - dB)*Vdc = m*sinθ*Vdc
+ *   uAB = uL - uR = (dL - dR)*Vdc = m*sinθ*Vdc
  *   电平只有 +Vdc / 0 / -Vdc 三种，uAB 每个载波周期出现两个脉冲，
  *   等效开关频率 = 2*fsw = 40kHz，滤波电感电容可以显著减小
  *
@@ -50,13 +50,13 @@
 void SPWM_Init(void);
 
 // 写调制比（Q24，-1 ~ +1），内部按单极性倍频算出左右桥臂两个比较值
-//   EPWM1.CMPA = TBPRD/2*(1 + mod)，EPWM2.CMPA = TBPRD/2*(1 - mod)
+//   EPWM1.CMPA = TBPRD/2*(1 - mod)（右桥臂），EPWM2.CMPA = TBPRD/2*(1 + mod)（左桥臂）
 void SPWM_SetMod(_iq mod);
 
 // 输出中点，mod=0，两桥臂都 50%，交流侧平均 0V
 void SPWM_SetNeutral(void);
 
-// 读回左桥臂当前 CMPA，调试观察用
+// 读回右桥臂（EPWM1，GPIO0/1）当前 CMPA，调试观察用
 Uint16 SPWM_GetCmp(void);
 
 // 启停/故障封锁统一走 Trip Zone（Protect_ForceStop / Protect_ClearTrip），
