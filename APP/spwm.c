@@ -10,7 +10,8 @@
  *       fsw = 60MHz / (2*1500) = 20kHz
  * ADC：EPWM1 在 CTR=ZERO 触发 SOCA
  *      SOC0 丢弃 SOC1=ADCA0 输出电流 SOC2=ADCA1 输出电压 SOC3=ADCA2 电感电流
- *      EOC3 -> ADCINT1 -> CPU 的 ADC 中断（控制环在中断里跑）
+ *      SOC4=ADCB1 输入电压 SOC5=ADCB0 输入电流（后两路只监视）
+ *      EOC5 -> ADCINT1 -> CPU 的 ADC 中断（控制环在中断里跑）
  *
  * 比较值装载：CMPA 走影子寄存器，CTR=ZERO 装载
  * 这样中断里在任意时刻写 CMPA 都不会产生窄脉冲，生效时刻固定

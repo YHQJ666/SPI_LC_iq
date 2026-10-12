@@ -10,7 +10,9 @@
  *        SOC1 = ADCINA0 输出电流 i_o
  *        SOC2 = ADCINA1 输出电压 v_o
  *        SOC3 = ADCINA2 电感电流 i_L
- *     EOC3 -> ADCINT1 -> CPU 的 ADC_ISR
+ *        SOC4 = ADCB1 输入电压 v_in（分压 80/3.3，只监视/保护）
+ *        SOC5 = ADCB0 输入电流 i_in（放大 150 倍，只监视/保护）
+ *     EOC5 -> ADCINT1 -> CPU 的 ADC_ISR
  *   ADC_ISR：换算工程量 -> 电容电流 i_c = i_L - i_o -> 查表
  *            -> 电压外环 PR -> 电容电流给定 -> 电流内环 PI
  *            -> mod 限幅 +-0.85 -> 写 EPWM1/EPWM2 CMPA
@@ -109,6 +111,13 @@ volatile _iq  IRef = 0;             // 电容电流给定 A
 volatile _iq  Mod  = 0;             // 瞬时调制比
 volatile Uint32 PhaseAcc = 0;       // 相位累加器：高 8 位查表下标，低 24 位 Q24 小数
 volatile _iq  RefRamp = 0;          // 软启动给定峰值
+
+// 输入侧两路采样：只存 ADC 原始码，不参与控制环，后续留给输入过压/过流保护。
+// 换算成工程量（加保护阈值时用）：
+//   输入电压 V = (VinRaw - ADC_Vin_Offset) * ADC_Vin_Span / 4096
+//   输入电流 A = (IinRaw - ADC_Iin_Offset) * ADC_Iin_Span / 4096
+volatile Uint16 VinRaw = 0U;        // ADCB1 输入电压原始码（0 -> 0V，4096 -> 80V）
+volatile Uint16 IinRaw = 0U;        // ADCB0 输入电流原始码（3103 -> 0A，量程 22A）
 
 volatile _iq   dbgSin   = 0;
 
@@ -307,13 +316,25 @@ __interrupt void ADC_ISR(void)
     GpioDataRegs.GPASET.bit.GPIO4 = 1;      // 中断计时脚拉高
 
     // ---- 1. 采样并换算工程量 ----
-    // SOC0 的第一次采样按原设计丢弃，这里从 SOC1 开始读
+    // 固定槽位：SOCn 的结果就在 ADCRESULTn 里，直接按下标取，不做任何判断
+    //   ADC_Ch_Dummy -> SOC0/ADCRESULT0，丢样（ADCINA0 的第一次采样不准）
+    //   ADC_Ch_Iout  -> SOC1/ADCRESULT1 输出电流
+    //   ADC_Ch_Vout  -> SOC2/ADCRESULT2 输出电压
+    //   ADC_Ch_IL    -> SOC3/ADCRESULT3 电感电流
+    //   ADC_Ch_Vin   -> SOC4/ADCRESULT4 输入电压（只监视）
+    //   ADC_Ch_Iin   -> SOC5/ADCRESULT5 输入电流（只监视）
     // 每个通道的零点码和满码量程在 dcac_cfg.h 里按调理电路标定，
     // 换算宏展开成 __IQmpy((raw-零点码)<<12, 量程(Q17), 17)
     Iout = ADC_To_IQ(AdcResult.ADCRESULT1, ADC_Iout_Offset, ADC_Iout_Span);
     Vout = ADC_To_IQ(AdcResult.ADCRESULT2, ADC_Vout_Offset, ADC_Vout_Span);
     IL   = ADC_To_IQ(AdcResult.ADCRESULT3, ADC_IL_Offset, ADC_IL_Span);
     ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
+
+    // 输入电压（ADCB1）/ 输入电流（ADCB0）：只存原始码，不换算、不参与控制环。
+    // 中断里一个乘法都不多做，后面加输入保护时再按 dcac_cfg.h 里的
+    // ADC_Vin_*/ADC_Iin_* 换算，或者直接拿码值和阈值码值比较
+    VinRaw = AdcResult.ADCRESULT4;
+    IinRaw = AdcResult.ADCRESULT5;
 
 #if (Debug_Fixed_Mod_En == 1)
 
@@ -428,7 +449,11 @@ __interrupt void ADC_ISR(void)
     IsrCnt++;
 
     // ---- 8. 清中断标志 ----
+    // INT1CONT = 1（连续模式）时标志由硬件在响应中断时自动清掉，
+    // 这里再写一次是为了清掉可能残留的旧标志，和连续模式不冲突。
+    // 溢出标志也清一下：它本身不产生中断，但留着会掩盖真正的丢拍
     AdcRegs.ADCINTFLGCLR.all = 0x0001;
+    AdcRegs.ADCINTOVFCLR.all = 0x0001;
     PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 
     GpioDataRegs.GPACLEAR.bit.GPIO4 = 1;    // 中断计时脚拉低
@@ -440,9 +465,25 @@ __interrupt void ADC_ISR(void)
 //   SOC1 -> ADCINA0 输出电流
 //   SOC2 -> ADCINA1 输出电压
 //   SOC3 -> ADCINA2 电感电流
+//   SOC4 -> ADCB1 输入电压（只监视）
+//   SOC5 -> ADCB0 输入电流（只监视）
 //   TRIGSEL=5 : EPWM1 SOCA（CTR=ZERO）
-//   INT1SEL=3 : EOC3 触发 ADCINT1
+//   INT1SEL=5 : EOC5 触发 ADCINT1
 //   INTPULSEPOS=1 : 转换结束结果锁存后才发中断脉冲
+//
+// 【为什么 INT1CONT 必须写 1】—— 这里踩过的坑，别改回去
+//   INTSEL1N2.INT1CONT = 0（关闭连续模式）时，中断标志 ADCINTFLG.ADCINT1
+//   是"锁存"的：EOC 到来时如果标志还是 1，ADC 只置一个溢出位 ADCINTOVF，
+//   不再产生新的中断脉冲。于是只要有一个脉冲没被及时清掉（ISR 执行时间
+//   接近或超过一个载波周期 50us、进 ISR 时被别的事情挡住、清标志的时机
+//   不对……），之后每一拍的 EOC 都会被"吃掉"，表现就是中断进了一次就
+//   再也不进，IsrCnt 永远停在 1。
+//   TI 对这个 ADCINTFLG 阻塞问题的官方修法就是文档里那句
+//   "Use Continue-to-Interrupt Mode to prevent the ADCINTFLG from blocking
+//    additional ADC interrupts"，也就是 INT1CONT = 1：
+//   连续模式下标志由硬件在 ISR 被响应时自动清掉，不会再锁死。
+//   ISR 里的 ADCINTFLGCLR 保留（清掉初始化阶段可能残留的旧标志），
+//   和连续模式不冲突。
 //===========================================================================
 void Adc_Config(void)
 {
@@ -451,23 +492,45 @@ void Adc_Config(void)
     AdcRegs.ADCCTL1.bit.INTPULSEPOS = 1;    // 结果锁存之后再发中断脉冲
 
     AdcRegs.INTSEL1N2.bit.INT1E     = 1;    // 使能 ADCINT1
-    AdcRegs.INTSEL1N2.bit.INT1CONT  = 0;    // 关闭 ADCINT1 连续模式
-    AdcRegs.INTSEL1N2.bit.INT1SEL   = 3;    // EOC3 触发 ADCINT1
+    AdcRegs.INTSEL1N2.bit.INT1CONT  = 1;    // 连续模式！见上面那段说明，不能写 0
+    AdcRegs.INTSEL1N2.bit.INT1SEL   = ADC_EOC_For_INT1;  // EOC5 触发 ADCINT1
 
+    // SOC0 丢一次（ADCINA0 复用给 i_o，修 rev0 首采样 errata）
     AdcRegs.ADCSOC0CTL.bit.CHSEL    = ADC_Ch_Dummy;
     AdcRegs.ADCSOC1CTL.bit.CHSEL    = ADC_Ch_Iout;
     AdcRegs.ADCSOC2CTL.bit.CHSEL    = ADC_Ch_Vout;
     AdcRegs.ADCSOC3CTL.bit.CHSEL    = ADC_Ch_IL;
+    AdcRegs.ADCSOC4CTL.bit.CHSEL    = ADC_Ch_Vin;
+    AdcRegs.ADCSOC5CTL.bit.CHSEL    = ADC_Ch_Iin;
 
     AdcRegs.ADCSOC0CTL.bit.TRIGSEL  = 5;    // EPWM1 SOCA
     AdcRegs.ADCSOC1CTL.bit.TRIGSEL  = 5;
     AdcRegs.ADCSOC2CTL.bit.TRIGSEL  = 5;
     AdcRegs.ADCSOC3CTL.bit.TRIGSEL  = 5;
+    AdcRegs.ADCSOC4CTL.bit.TRIGSEL  = 5;
+    AdcRegs.ADCSOC5CTL.bit.TRIGSEL  = 5;
 
     AdcRegs.ADCSOC0CTL.bit.ACQPS    = 6;    // 采样窗 7 个 ADCCLK
     AdcRegs.ADCSOC1CTL.bit.ACQPS    = 6;
     AdcRegs.ADCSOC2CTL.bit.ACQPS    = 6;
     AdcRegs.ADCSOC3CTL.bit.ACQPS    = 6;
+    AdcRegs.ADCSOC4CTL.bit.ACQPS    = 6;
+    AdcRegs.ADCSOC5CTL.bit.ACQPS    = 6;
+
+    // ---- 把 SOC 轮询指针拨回 SOC0，并清掉自校准留下的旧标志 ----
+    // InitAdc() 之后的 AdcOffsetSelfCal() 会把 16 个 SOC 全改成 B5 通道
+    // 并强制转换 256 次，跑完以后轮询指针和 SOC 标志都是"脏"的。
+    // SOCPRICTL.SOCPRIORITY 写 1 再写回 0 会让硬件复位轮询指针
+    // （写 1 -> 等到读回 1 -> 写 0 -> 等到读回 0，指针归 0），
+    // 这样下一个 SOCA 一定从 SOC0 开始，丢样和 SOC1~5 的对应关系才稳。
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 1;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 1) {}
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 0;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 0) {}
+
+    AdcRegs.ADCSOCFLG1.all    = 0xFFFF;     // 清掉全部 SOC 挂起标志
+    AdcRegs.ADCINTFLGCLR.all  = 0x0001;     // 清 ADCINT1 旧标志
+    AdcRegs.ADCINTOVFCLR.all  = 0x0001;     // 清 ADCINT1 溢出标志
 
     EDIS;
 }

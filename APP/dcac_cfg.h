@@ -9,6 +9,9 @@
  *   SOC1 = ADCINA0 输出电流 i_o
  *   SOC2 = ADCINA1 输出电压 v_o
  *   SOC3 = ADCINA2 电感电流 i_L
+ *   SOC4 = ADCB1 输入电压 v_in（分压 80/3.3，只监视/保护）
+ *   SOC5 = ADCB0 输入电流 i_in（放大 150 倍，只监视/保护）
+ *   控制环只吃 i_o / v_o / i_L，两路输入量原样存进 VinRaw / IinRaw 留给保护
  * 控制：电容电流 i_c = i_L - i_o
  *   电压外环 PR(准比例谐振) -> 电容电流给定 -> 电流内环 PI -> 调制比 mod
  *
@@ -48,7 +51,9 @@
 #define Loop_Open       0
 #define Loop_Closed     1
 // 0 = 开环（只出正弦，不走 PR/PI），1 = 闭环（电压外环 PR + 电容电流内环 PI）
-#define Loop_Mode       1
+// 注意：开环时 ADC 反馈完全不参与控制，所以采样引脚悬空也能出正弦；
+//       闭环时反馈是悬空采到的乱值，输出必然乱，必须先接好采样再闭环
+#define Loop_Mode       0
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----
 // ePWM 增减计数：fsw = TBCLK / (2 * TBPRD)
@@ -102,10 +107,27 @@
 #define Phase_Mask      0xFFFFFFFFUL
 
 // ---- 4. ADC 通道分配 ----
-#define ADC_Ch_Dummy    0U      // SOC0，第一次采样，结果丢弃
-#define ADC_Ch_Iout     0U      // SOC1 -> ADCINA0 输出电流
+// F2803x 的 ADC 有 A/B 两组各 8 个通道，SOCxCTL.CHSEL 的编号是连续的：
+//   A 组 ADCINA0~A7 = 通道 0~7
+//   B 组 ADCINB0~B7 = 通道 8~15
+// 所以 ADCB0 = 8、ADCB1 = 9。
+// ADCB0 / ADCB1 在 F2803x 上是纯模拟脚（AIOMUX1 里对应位是保留位），
+// 复位后就是模拟输入，不需要像 ADCINA2/A4 那样写 AIOMUX 配置。
+//
+// SOC 顺序 = 转换顺序：全部 SOC 共用同一个触发源（EPWM1 SOCA）、同样的优先级，
+// 所以每个载波周期都按 SOC0 -> SOC1 -> ... 固定顺序转换。
+// 这种"固定槽位"写法下第 N 个 SOC 的结果一定落在 ADCRESULTn 里，
+// 不依赖轮询指针当拍停在哪儿，比"通道和 ADCRESULT 编号错开"稳得多
+#define ADC_Ch_Dummy    0U      // SOC0 -> ADCINA0，第一次采样，结果丢弃
+#define ADC_Ch_Iout     0U      // SOC1 -> ADCINA0 输出电流（与 SOC0 同通道，配合丢样）
 #define ADC_Ch_Vout     1U      // SOC2 -> ADCINA1 输出电压
 #define ADC_Ch_IL       2U      // SOC3 -> ADCINA2 电感电流
+#define ADC_Ch_Vin      9U      // SOC4 -> ADCB1 输入电压（只监视）
+#define ADC_Ch_Iin      8U      // SOC5 -> ADCB0 输入电流（只监视）
+
+// 中断触发点 = 最后一个 SOC。以后再加通道，这里必须跟着改，
+// 否则 ADCINT1 会在新通道转换完成之前就进 ISR，读到的还是上一拍的结果
+#define ADC_EOC_For_INT1 5U     // EOC5（SOC5 = i_in）触发 ADCINT1
 
 // ---- 5. 采样前端标定 ----
 // 调理电路送到 ADC 引脚的电压 Vpin，12 位 ADC 满码 3.3V、4096 码：
@@ -129,6 +151,25 @@
 #define ADC_Vout_Offset     1862        // 电压零点 1.5V 对应的码值
 #define ADC_Vout_Span       105.6f      // 满码 4096 对应 105.6V
 
+// ---- 5a. 输入侧两路采样（只做监视/保护，不参与控制环） ----
+// 输入电压：电阻分压 80/3.3
+//   Vpin = Vin * 3.3/80，Vin = 80V 时正好 3.3V（满码）
+//   分压比要按可能的最高输入电压选，超过 80V 就被 3.3V 钳位
+//   Vin = Vpin * 80/3.3 = (code/4096) * 80
+//   零点码 0，满码 4096 对应 80V，即 19.5mV/code
+#define ADC_Vin_Offset      0
+#define ADC_Vin_Span        80.0f       // 满码 4096 对应 80V
+
+// 输入电流：采样电阻 + 150 倍放大
+//   Vpin = 2.5 + 0.001 * 150 * Iin = 2.5 + 0.15 * Iin
+//   Iin  = (code - 2.5/3.3*4096) * 3.3/4096/0.15
+//        = (code - 3103) * 5.371mA
+//   满码 4096 对应 3.3/0.15 = 22A，实际 0~4095 码 -> -16.7A ~ +5.3A
+//   ★ 这里的 0.001 是 1mΩ 采样电阻。换采样电阻只改这两个宏：
+//       Span = 3.3 / (Rsense * 150)，Offset = 2.5/3.3*4096 = 3103（偏置 2.5V 不变时）
+#define ADC_Iin_Offset      3103        // 电流零点 2.5V 对应的码值
+#define ADC_Iin_Span        22.0f       // 满码 4096 对应 22A（1mΩ + 150 倍）
+
 // 定点换算 value = (raw - Offset) * Span / 4096：
 //   (raw-Offset) << 12   = (raw-Offset)/4096 的 Q24，最大 3103*4096 = 1.3e7，不溢出
 //   Span 乘 2^17 做成 Q17 常量：165 * 131072 = 2.16e7，32 位装得下
@@ -137,6 +178,12 @@
 #define ADC_Scale_Q17(span) ((long)((span) * 131072.0f))
 #define ADC_To_IQ(raw, off, span) \
     __IQmpy((_iq)(((long)(raw) - (long)(off)) << 12), ADC_Scale_Q17(span), 17)
+
+// 输入侧两路只存原始码，不换算成工程量：
+//   vin = (VinRaw - ADC_Vin_Offset) * ADC_Vin_Span / 4096
+//   iin = (IinRaw - ADC_Iin_Offset) * ADC_Iin_Span / 4096
+// 后面加保护阈值时，既可以直接比码值（省一次乘法），也可以按上面公式算成
+// Q24 再和 _IQ(阈值) 比；原始码在中断里原样存下来最省时间
 
 // ---- 6. 控制环参数（待整定） ----
 #define W0_V_F          314.159265f     // 电压环 2*pi*50 谐振角频率
