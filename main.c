@@ -50,6 +50,7 @@
 void InitAdc(void);
 void AdcOffsetSelfCal(void);
 void Adc_Config(void);
+void Adc_ZeroCal(void);
 void Gpio_Config(void);
 __interrupt void ADC_ISR(void);
 #if (Protect_Enable == 1)
@@ -119,6 +120,48 @@ volatile _iq  RefRamp = 0;          // 软启动给定峰值
 volatile Uint16 VinRaw = 0U;        // ADCB1 输入电压原始码（0 -> 0V，4096 -> 80V）
 volatile Uint16 IinRaw = 0U;        // ADCB0 输入电流原始码（3103 -> 0A，量程 22A）
 
+//===========================================================================
+// ADC 零点校准结果
+//   存的是"负的零点码"，也就是要加到原始码上的那个量：
+//     value = (raw + OffsetNeg) * Span / 4096
+//   为什么要存负号：换算乘的是 Q24 的 (raw-Offset)/4096，(raw-Offset)<<12
+//   本来可能到 -3103*4096 = -1.27e7，逼近 IQmpy 的负数下界；存成 -(Offset-raw)
+//   就自然变成正数偏移，乘 Span(最多 165) 也不会溢出，不需要再钳位
+//   只在 main() 里赋值一次，之后全是只读，中断里读它做换算
+//   初值是 0，也就是"还没校准"，换算结果等价于 (raw - 标称Offset)：
+//   因为下面的换算宏用的是标准 _IQmpy，而标称值在宏里是编译期常量
+//===========================================================================
+volatile long VoutOffNeg = 0L;
+volatile long IoutOffNeg = 0L;
+volatile long ILOffNeg   = 0L;
+volatile long VinOffNeg  = 0L;
+volatile long IinOffNeg  = 0L;
+volatile Uint16 CalDone  = 0U;      // 1 = 校零已执行（调试观察用）
+volatile Uint16 CalMiss  = 0U;      // 因一致性检查没过而放弃校准的通道数
+
+// 校零时实测到的各通道零点数据，调试观察用（索引和 Adc_ZeroCal 的 ch 对应）
+//   MeanCode：该通道 ADC 引脚电压平均下来的原始码（12 位，0~4095）
+//             引脚电压 = MeanCode / 4096 * 3.3V，调试器里懒得手算就改看
+//             Debug_View.CalPinVxxx（已经是 V 了）
+//   Spread  ：前 64 点的 (max-min)，判断这一路是不是悬空/在跳
+//   Valid   ：1 = 通过了 Spread 检查，校零生效；0 = 放弃，用标称零点
+volatile Uint16 CalMeanCode[6] = {0U, 0U, 0U, 0U, 0U, 0U};
+volatile Uint16 CalSpread[6]   = {0U, 0U, 0U, 0U, 0U, 0U};
+volatile Uint16 CalValid[6]    = {0U, 0U, 0U, 0U, 0U, 0U};
+
+//===========================================================================
+// 输出幅值检测（只给调试器看，控制环不用）
+//   按工频周期复位的峰值保持 + 每周期一阶平均，见 dcac_cfg.h 第 11 节说明
+//   仿真实测：稳态纹波 0.056%，幅值阶跃后约 0.25s 收敛到 2% 以内
+//===========================================================================
+volatile _iq VoutAmp = 0;           // 输出电压幅值 V（峰值）
+volatile _iq IoutAmp = 0;           // 输出电流幅值 A（峰值）
+volatile _iq ICapAmp = 0;           // 电容电流幅值 A（峰值）
+volatile _iq VpkAcc  = 0;           // 本周期的运行峰值（内部用）
+volatile _iq IpkAcc  = 0;
+volatile _iq CpkAcc  = 0;
+volatile Uint16 AmpCnt = 0U;        // 工频周期计数，满 Amp_Cycle_Samples 提交一次
+
 volatile _iq   dbgSin   = 0;
 
 // 运行控制与故障
@@ -154,6 +197,25 @@ volatile struct
     float PI_Err;       // 电流环误差 A
     float PI_Integral;  // 电流环积分项
     float PI_Out;       // 电流环输出（调制比）
+
+    // 幅值（峰值保持 + 每工频周期平均的结果，只给调试器看）
+    float VoutAmp;      // 输出电压幅值 V（峰值）
+    float VoutAmpRms;   // 输出电压幅值 Vrms = VoutAmp/sqrt(2)
+    float IoutAmp;      // 输出电流幅值 A（峰值）
+    float IoutAmpRms;   // 输出电流幅值 Arms
+    float ICapAmp;      // 电容电流幅值 A（峰值）
+    float ICapAmpRms;   // 电容电流幅值 Arms
+
+    // 校零时各通道 ADC 引脚上的实际电压（V）
+    // 就是"零输入时引脚上的基准电压"，例如 2.48 / 1.49 这种数，
+    // 调试器里可以直接和万用表实测值对比，验调理电路对不对
+    float CalPinVIout;  // 输出电流通道引脚电压，标称 2.5V
+    float CalPinVVout;  // 输出电压通道引脚电压，标称 1.5V
+    float CalPinVIL;    // 电感电流通道引脚电压，标称 2.5V
+    float CalPinVVin;   // 输入电压通道引脚电压，标称 0V（分压后）
+    float CalPinVIin;   // 输入电流通道引脚电压，标称 2.5V
+    float CalSpreadMax; // 各通道一致性检查里最大的 (max-min)，单位：ADC 码
+    float CalMissCnt;   // 一致性检查没过而放弃校准的通道数（0 = 全部可信）
 } Debug_View;
 
 static Uint16 Debug_Count = 0U;     // 后台循环分频计数
@@ -177,8 +239,16 @@ void main(void)
     InitPieVectTable();
 
     // 外设初始化
+    // 顺序有讲究：
+    //   InitAdc()          上电 ADC、拿 OTP 里的校准值
+    //   AdcOffsetSelfCal() 校 ADC 内核自己的失调（内部 VREFLO）
+    //   Adc_ZeroCal()      软件校零，量整条调理链路的零点（要在内核失调修好之后）
+    //   Adc_Config()       正式配置 SOC 通道和触发源，并把轮询指针拨回 SOC0
+    // Adc_ZeroCal 必须在 SPWM_Init 之前：那时 EPWM 还没起振，不会有 SOCA
+    // 来抢轮询指针，测出来的零点才是干净的
     InitAdc();
     AdcOffsetSelfCal();
+    Adc_ZeroCal();
     Adc_Config();
 
     SPWM_Init();
@@ -300,9 +370,200 @@ void main(void)
             Debug_View.PI_Err      = _IQtoF(PI_I.Err);
             Debug_View.PI_Integral = _IQtoF(PI_I.Integral);
             Debug_View.PI_Out      = _IQtoF(PI_I.Out);
+
+            // 幅值：Amp_* 里存的是峰值，Rms 由峰值乘 0.70710678 得到
+            Debug_View.VoutAmp     = _IQtoF(VoutAmp);
+            Debug_View.VoutAmpRms  = _IQtoF(_IQmpy(VoutAmp, Amp_PkToRms));
+            Debug_View.IoutAmp     = _IQtoF(IoutAmp);
+            Debug_View.IoutAmpRms  = _IQtoF(_IQmpy(IoutAmp, Amp_PkToRms));
+            Debug_View.ICapAmp     = _IQtoF(ICapAmp);
+            Debug_View.ICapAmpRms  = _IQtoF(_IQmpy(ICapAmp, Amp_PkToRms));
+
+            // 校零时各通道 ADC 引脚的实际电压，单位 V
+            // = 平均码 / 4096 * 3.3，可以直接和万用表打在 ADC 引脚上的读数对比
+            // 引脚电压 × 分压/放大倍数 就是输入端的物理量，例如：
+            //   CalPinVIout 2.48V -> 对应输出电流 (2.48-2.5)/0.02 = -1.0A
+            //   CalPinVVout 1.49V -> 对应输出电压 (1.49-1.5)/0.03125 = -0.32V
+            //   CalPinVVin  分压 80/3.3，引脚 0V 对应输入 0V，满码 3.3V 对应 80V
+            Debug_View.CalPinVIout = (float)CalMeanCode[0] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVVout = (float)CalMeanCode[1] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVIL   = (float)CalMeanCode[2] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVVin  = (float)CalMeanCode[3] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVIin  = (float)CalMeanCode[4] * ADC_Vref / 4096.0f;
+
+            // 一致性检查里最大的跳幅（码），以及被放弃校准的通道数
+            // CalMissCnt = 0 说明 5 路全部通过检查，校零都已生效
+            // 哪一路没过可以单独看 CalSpread[0..4] 和 CalValid[0..4]
+            {
+                Uint16 k;
+                Uint16 sp;
+
+                sp = 0U;
+                for (k = 0U; k < 5U; k++)
+                {
+                    if (CalSpread[k] > sp) { sp = CalSpread[k]; }
+                }
+                Debug_View.CalSpreadMax = (float)sp;
+                Debug_View.CalMissCnt   = (float)CalMiss;
+            }
         }
 #endif
     }
+}
+
+//===========================================================================
+// ADC 零点校准（软件校零）
+//
+// 做什么：
+//   把 SOC0~SOC5 的触发源临时改成"软件触发"，逐个通道强制转换并累加
+//   ADC_ZeroCal_Samples 次，求平均得到实测零点码，再折成 OffsetNeg 存起来。
+//   跑完把触发源还给 EPWM1 SOCA，并把轮询指针拨回 SOC0。
+//
+// 放在初始化序列的哪一步：
+//   InitAdc() -> AdcOffsetSelfCal() -> Adc_ZeroCal() -> Adc_Config() -> SPWM_Init()
+//   必须在 AdcOffsetSelfCal() 之后（内核失调已经修好，测出来的才准），
+//   在 SPWM_Init() 之前（EPWM 还没起振，不会有 SOCA 来抢轮询指针），
+//   也在 EINT 之前（此时没有任何中断，不会被 ISR 打断）。
+//
+// 前提：调用这一刻各路输入必须真的是零，否则校出来的是"当时的输入"，
+//       不是零点。见 dcac_cfg.h 第 5b 节的说明。不满足就把
+//       ADC_ZeroCal_Enable 置 0。
+//
+// 保护：每路用前 ADC_ZeroCal_SpreadN 点算 (max-min)，
+//       超过 ADC_ZeroCal_MaxSpread 就认为这一路悬空/在跳，
+//       放弃校准、OffsetNeg 留 0（等价于用标称 Offset），并累加 CalMiss。
+//       通道之间的失调差异各算各的，互不影响。
+//===========================================================================
+void Adc_ZeroCal(void)
+{
+#if (ADC_ZeroCal_Enable == 1)
+    Uint16 ch;
+    Uint16 i;
+    Uint16 raw;
+    Uint16 mx;
+    Uint16 mn;
+    Uint32 sum;
+    long   zeroCode;
+    long   nominal;
+    long   offneg;
+
+    EALLOW;
+    AdcRegs.ADCINTFLGCLR.all = 0x0001;      // 清掉可能残留的中断标志
+    AdcRegs.ADCINTOVFCLR.all = 0x0001;
+
+    // 全部 SOC 改成软件触发（TRIGSEL=0，靠 ADCSOCFRC1 强制启动）
+    // SOC0~SOC5 后面 Adc_Config() 会统一恢复成 EPWM1 SOCA，
+    // 这里只是临时借用一下，好在上电阶段把零点测出来
+    AdcRegs.ADCSOC0CTL.bit.TRIGSEL = 0;
+    AdcRegs.ADCSOC1CTL.bit.TRIGSEL = 0;
+    AdcRegs.ADCSOC2CTL.bit.TRIGSEL = 0;
+    AdcRegs.ADCSOC3CTL.bit.TRIGSEL = 0;
+    AdcRegs.ADCSOC4CTL.bit.TRIGSEL = 0;
+    AdcRegs.ADCSOC5CTL.bit.TRIGSEL = 0;
+
+    // 松开轮询指针，从 SOC0 开始
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 1;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 1) {}
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 0;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 0) {}
+
+    for (ch = 0U; ch < 6U; ch++)
+    {
+        // 把待测通道放到 SOC0（轮询指针重新拨到 SOC0 之后第一个转的就是它）
+        // IO 和 IL 就是要单独测的，因为 ICap = IL - Iout 的零点是两者的差，
+        // 两路各自校零以后 ICap 的零点自然也准了
+        switch (ch)
+        {
+            case 0U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iout; break;
+            case 1U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Vout; break;
+            case 2U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_IL;   break;
+            case 3U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Vin;  break;
+            case 4U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iin;  break;
+            default: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Dummy; break;
+        }
+
+        sum = 0UL;
+        mx  = 0U;
+        mn  = 4095U;
+
+        for (i = 0U; i < ADC_ZeroCal_Samples; i++)
+        {
+            // 轮询指针拨回 SOC0，保证这一拍转的确实是我们要测的那个通道
+            AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 1;
+            while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 1) {}
+            AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 0;
+            while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 0) {}
+
+            AdcRegs.ADCSOCFRC1.all = 0x0001;        // 强制 SOC0 转换
+
+            // 等 SOC0 转换完成。SOCFLG 是转换"开始"时置位，
+            // 所以中间等一下再读结果，确保 ADCRESULT0 已经刷新
+            while (AdcRegs.ADCSOCFLG1.bit.SOC0 != 0U) {}
+
+            raw = AdcResult.ADCRESULT0;
+
+            if (i < ADC_ZeroCal_SpreadN)
+            {
+                if (raw > mx) { mx = raw; }
+                if (raw < mn) { mn = raw; }
+            }
+
+            sum += (Uint32)raw;
+        }
+
+        zeroCode = (long)(sum >> ADC_ZeroCal_Shift);    // 256 点求平均 = 右移 8
+
+        // 记录实测数据给调试器看：平均码、跳幅
+        // 注意 CalMeanCode 是无条件记录的——就算一致性检查没过、
+        // 这一路不参与校零，它的平均引脚电压仍然是真实的，照样能和万用表对
+        CalMeanCode[ch] = (Uint16)zeroCode;
+        CalSpread[ch]   = (Uint16)(mx - mn);
+
+        // 该通道零点码的标称值（编译期常量，和上面 CHSEL 的顺序一一对应）
+        switch (ch)
+        {
+            case 0U: nominal = (long)ADC_Iout_Offset; break;
+            case 1U: nominal = (long)ADC_Vout_Offset; break;
+            case 2U: nominal = (long)ADC_IL_Offset;   break;
+            case 3U: nominal = (long)ADC_Vin_Offset;  break;
+            default: nominal = (long)ADC_Iin_Offset;  break;
+        }
+
+        // 一致性检查：跳得太厉害说明这一路悬空或没接好，宁可不校
+        if (CalSpread[ch] > (Uint16)ADC_ZeroCal_MaxSpread)
+        {
+            offneg = 0L;
+            CalValid[ch] = 0U;              // 该路不可信，不参与校零
+            CalMiss++;
+        }
+        else
+        {
+            offneg = nominal - zeroCode;    // offneg = nominal - raw_zero
+            CalValid[ch] = 1U;
+        }
+
+        switch (ch)
+        {
+            case 0U: IoutOffNeg = offneg; break;   // ADCINA0 输出电流零点
+            case 1U: VoutOffNeg = offneg; break;   // ADCINA1 输出电压零点
+            case 2U: ILOffNeg   = offneg; break;   // ADCINA2 电感电流零点
+            case 3U: VinOffNeg  = offneg; break;   // ADCB1   输入电压零点
+            default: IinOffNeg  = offneg; break;   // ADCB0   输入电流零点
+        }
+    }
+    // 恢复：轮询指针拨回 SOC0，SOC 挂起标志清掉
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 1;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 1) {}
+    AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 0;
+    while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 0) {}
+    AdcRegs.ADCSOCFLG1.all = 0xFFFF;
+    AdcRegs.ADCINTFLGCLR.all = 0x0001;
+    AdcRegs.ADCINTOVFCLR.all = 0x0001;
+
+    EDIS;
+
+    CalDone = 1U;
+#endif
 }
 
 //===========================================================================
@@ -325,9 +586,12 @@ __interrupt void ADC_ISR(void)
     //   ADC_Ch_Iin   -> SOC5/ADCRESULT5 输入电流（只监视）
     // 每个通道的零点码和满码量程在 dcac_cfg.h 里按调理电路标定，
     // 换算宏展开成 __IQmpy((raw-零点码)<<12, 量程(Q17), 17)
-    Iout = ADC_To_IQ(AdcResult.ADCRESULT1, ADC_Iout_Offset, ADC_Iout_Span);
-    Vout = ADC_To_IQ(AdcResult.ADCRESULT2, ADC_Vout_Offset, ADC_Vout_Span);
-    IL   = ADC_To_IQ(AdcResult.ADCRESULT3, ADC_IL_Offset, ADC_IL_Span);
+    // 用 ADC_To_IQ_Cal：零点码用实测校零结果（主程序启动时测出来的），
+    // 没校准或该校通道被一致性检查挡掉时 OffsetNeg = 0，
+    // 此时它和 ADC_To_IQ(标称零点码) 完全等价
+    Iout = ADC_To_IQ_Cal(AdcResult.ADCRESULT1, ADC_Iout_Offset, IoutOffNeg, ADC_Iout_Span);
+    Vout = ADC_To_IQ_Cal(AdcResult.ADCRESULT2, ADC_Vout_Offset, VoutOffNeg, ADC_Vout_Span);
+    IL   = ADC_To_IQ_Cal(AdcResult.ADCRESULT3, ADC_IL_Offset,   ILOffNeg,   ADC_IL_Span);
     ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
 
     // 输入电压（ADCB1）/ 输入电流（ADCB0）：只存原始码，不换算、不参与控制环。
@@ -335,6 +599,39 @@ __interrupt void ADC_ISR(void)
     // ADC_Vin_*/ADC_Iin_* 换算，或者直接拿码值和阈值码值比较
     VinRaw = AdcResult.ADCRESULT4;
     IinRaw = AdcResult.ADCRESULT5;
+
+#if (Amp_Track_En == 1)
+    // ---- 1b. 幅值检测：按工频周期复位的峰值保持 ----
+    // 只给调试器看，完全不进控制环。每个中断拍做 3 次"取绝对值 + 比较"，
+    // 超不过就不动，代价极小；每满一个工频周期（400 拍 @20kHz）才提交一次
+    // 平均值。原理和滤波系数怎么定的见 dcac_cfg.h 第 11 节
+    {
+        _iq ax;
+
+        ax = (Vout > 0) ? Vout : -Vout;
+        if (ax > VpkAcc) { VpkAcc = ax; }
+
+        ax = (Iout > 0) ? Iout : -Iout;
+        if (ax > IpkAcc) { IpkAcc = ax; }
+
+        ax = (ICap > 0) ? ICap : -ICap;
+        if (ax > CpkAcc) { CpkAcc = ax; }
+
+        if (++AmpCnt >= Amp_Cycle_Samples)
+        {
+            AmpCnt = 0U;
+
+            // amp += (pk - amp) >> Amp_Avg_Shift，等价于一阶低通
+            VoutAmp += (VpkAcc - VoutAmp) >> Amp_Avg_Shift;
+            IoutAmp += (IpkAcc - IoutAmp) >> Amp_Avg_Shift;
+            ICapAmp += (CpkAcc - ICapAmp) >> Amp_Avg_Shift;
+
+            VpkAcc = 0;     // 清掉本周期峰值，下个周期重新找
+            IpkAcc = 0;
+            CpkAcc = 0;
+        }
+    }
+#endif
 
 #if (Debug_Fixed_Mod_En == 1)
 

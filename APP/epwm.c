@@ -30,25 +30,34 @@ void EPWM1_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed)
 {
     SysCtrlRegs.PCLKCR1.bit.EPWM1ENCLK = 1;
 
-    EPwm1Regs.TBCTL.bit.SYNCOSEL = 1;       // CTR=Zero 发同步脉冲
-    EPwm1Regs.TBCTL.bit.PHSEN    = 0;       // 禁止相位加载（主模块）
-    EPwm1Regs.TBPHS.half.TBPHS   = 0;
-    EPwm1Regs.TBCTR              = 0;
-    EPwm1Regs.TBPRD              = tbprd;
-    EPwm1Regs.TBCTL.bit.CTRMODE  = 2;       // 上下计数模式
-    EPwm1Regs.TBCTL.bit.HSPCLKDIV = 0;
-    EPwm1Regs.TBCTL.bit.CLKDIV    = 0;
+    EPwm1Regs.TBCTL.bit.SYNCOSEL   = 1;     // CTR=Zero 发同步脉冲
+    EPwm1Regs.TBCTL.bit.PHSEN      = 0;     // 主模块
+    EPwm1Regs.TBPHS.half.TBPHS     = 0;
+    EPwm1Regs.TBCTR                = 0;
+    EPwm1Regs.TBPRD                = tbprd;
+    EPwm1Regs.TBCTL.bit.CTRMODE    = 2;     // 上下计数
+    EPwm1Regs.TBCTL.bit.HSPCLKDIV  = 0;
+    EPwm1Regs.TBCTL.bit.CLKDIV     = 0;
 
-    // 比较值走影子寄存器，CTR=ZERO 装载（CLA 任意时刻写都安全）
+    // 比较值影子寄存器，CTR=ZERO 装载
     EPwm1Regs.CMPCTL.bit.SHDWAMODE = 0;
     EPwm1Regs.CMPCTL.bit.LOADAMODE = 0;
-    EPwm1Regs.CMPA.half.CMPA = 0;
-    EPwm1Regs.CMPB = 0;
+    EPwm1Regs.CMPA.half.CMPA       = 0;
+    EPwm1Regs.CMPB                 = 0;
 
-    EPwm1Regs.AQCTLA.bit.ZRO = 2;   // set
-    EPwm1Regs.AQCTLA.bit.CAU = 1;   // clear
-    EPwm1Regs.AQCTLB.bit.ZRO = 1;   // clear
-    EPwm1Regs.AQCTLB.bit.CBU = 2;   // set
+    // ---- AQCTLA：d = CMPA / TBPRD ----
+    EPwm1Regs.AQCTLA.bit.ZRO = 0;   // 不动
+    EPwm1Regs.AQCTLA.bit.PRD = 0;   // 不动
+    EPwm1Regs.AQCTLA.bit.CAU = 1;   // CMPA 向上 → CLEAR
+    EPwm1Regs.AQCTLA.bit.CAD = 2;   // CMPA 向下 → SET
+
+    // ---- AQCTLB：必须全 0，EPWMxB 交给死区模块取反 ----
+    EPwm1Regs.AQCTLB.bit.ZRO = 0;
+    EPwm1Regs.AQCTLB.bit.PRD = 0;
+    EPwm1Regs.AQCTLB.bit.CAU = 0;
+    EPwm1Regs.AQCTLB.bit.CAD = 0;
+    EPwm1Regs.AQCTLB.bit.CBU = 0;
+    EPwm1Regs.AQCTLB.bit.CBD = 0;
 
     EPwmDeadBandConfig(&EPwm1Regs, dbRed, dbFed);
 }
@@ -72,10 +81,14 @@ void EPWM##module##_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseS
     EPwm##module##Regs.CMPCTL.bit.LOADAMODE = 0; \
     EPwm##module##Regs.CMPA.half.CMPA = 0; \
     EPwm##module##Regs.CMPB = 0; \
-    EPwm##module##Regs.AQCTLA.bit.ZRO = 2; \
-    EPwm##module##Regs.AQCTLA.bit.CAU = 1; \
-    EPwm##module##Regs.AQCTLB.bit.ZRO = 1; \
-    EPwm##module##Regs.AQCTLB.bit.CBU = 2; \
+    EPwm##module##Regs.AQCTLA.bit.ZRO = 0;   \
+    EPwm##module##Regs.AQCTLA.bit.CAU = 1;   \
+    EPwm##module##Regs.AQCTLA.bit.CAD = 2;   \
+    EPwm##module##Regs.AQCTLB.bit.ZRO = 0;   \
+    EPwm##module##Regs.AQCTLB.bit.CAU = 0;   \
+    EPwm##module##Regs.AQCTLB.bit.CAD = 0;   \
+    EPwm##module##Regs.AQCTLB.bit.CBU = 0;   \
+    EPwm##module##Regs.AQCTLB.bit.CBD = 0;   \
     EPwmDeadBandConfig(&EPwm##module##Regs, dbRed, dbFed); \
 }
 

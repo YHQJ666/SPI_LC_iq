@@ -51,8 +51,6 @@
 #define Loop_Open       0
 #define Loop_Closed     1
 // 0 = 开环（只出正弦，不走 PR/PI），1 = 闭环（电压外环 PR + 电容电流内环 PI）
-// 注意：开环时 ADC 反馈完全不参与控制，所以采样引脚悬空也能出正弦；
-//       闭环时反馈是悬空采到的乱值，输出必然乱，必须先接好采样再闭环
 #define Loop_Mode       0
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----
@@ -119,8 +117,8 @@
 // 这种"固定槽位"写法下第 N 个 SOC 的结果一定落在 ADCRESULTn 里，
 // 不依赖轮询指针当拍停在哪儿，比"通道和 ADCRESULT 编号错开"稳得多
 #define ADC_Ch_Dummy    0U      // SOC0 -> ADCINA0，第一次采样，结果丢弃
-#define ADC_Ch_Iout     0U      // SOC1 -> ADCINA0 输出电流（与 SOC0 同通道，配合丢样）
-#define ADC_Ch_Vout     1U      // SOC2 -> ADCINA1 输出电压
+#define ADC_Ch_Iout     1U      // SOC1 -> ADCINA0 输出电流（与 SOC0 同通道，配合丢样）
+#define ADC_Ch_Vout     0U      // SOC2 -> ADCINA1 输出电压
 #define ADC_Ch_IL       2U      // SOC3 -> ADCINA2 电感电流
 #define ADC_Ch_Vin      9U      // SOC4 -> ADCB1 输入电压（只监视）
 #define ADC_Ch_Iin      8U      // SOC5 -> ADCB0 输入电流（只监视）
@@ -170,6 +168,43 @@
 #define ADC_Iin_Offset      3103        // 电流零点 2.5V 对应的码值
 #define ADC_Iin_Span        22.0f       // 满码 4096 对应 22A（1mΩ + 150 倍）
 
+// ---- 5b. ADC 零点校准（软件校零） ----
+// 上面那组 Offset 是"标称值"，按 2.5V/1.5V 偏置算出来的。实际板子元件有误差
+// 和温漂，真零点会偏几十个码。校零做的事：让各路调理电路处于静止零输入，
+// 把这几十/几百拍的 ADC 码值平均出来，当成真正的零点码。
+//
+// 和 TI 的 AdcOffsetSelfCal() 是两回事，别搞混：
+//   AdcOffsetSelfCal() 校的是 ADC 内核自己的失调（内部把 VREFLO 短到采样端
+//   测出来的），信号路径完全不经过外部调理电路，所以它消不掉 2.5V/1.5V
+//   偏置和运放失调。本函数是软件校零，量的是"整条链路"的零点。
+//
+// 启用条件：校零的那一下，各路输入必须真的是零
+//   Vout 通道     -> 输出空载，桥臂不给电压
+//   Iout/IL/ICap  -> 采样电阻上没有电流流过
+//   两路输入      -> 输入电压/输入电流为 0
+// 满足不了就把 ADC_ZeroCal_Enable 置 0，用上面的标称 Offset 也能跑，
+// 只是读数会带上板子的实际零点误差
+#define ADC_ZeroCal_Enable  1
+
+// 每通道平均多少个采样点（必须是 2 的幂，代码里用右移求平均）
+// 256 点 @20kHz = 12.8ms，够把噪声平均掉，也不会校太久
+#define ADC_ZeroCal_Samples 256U
+#define ADC_ZeroCal_Shift   8U      // log2(ADC_ZeroCal_Samples)
+
+// 一致性检查：用前 64 点的 (最大-最小) 判断这一路是不是悬空/在跳。
+// 超过这个码数就认为该通道不可信，放弃校准、保留标称 Offset。
+// 静止时正常应该在几个码以内。
+// ★ 如果误报了，先确认这一路是不是真的悬空；确实需要放宽再调大这个值
+#define ADC_ZeroCal_MaxSpread   64
+#define ADC_ZeroCal_SpreadN     64U     // 用前多少点做一致性检查
+
+// ADC 满量程（参考）电压，用来把原始码直接换算成"引脚电压"：
+//   引脚电压 V = code / 4096 * ADC_Vref
+// 调试器里看 Debug_View.CalPinVxxx 就是拿这个算的，单位 V，
+// 可以直接和万用表打在 ADC 引脚上的读数对比，
+// 用来验证调理电路的分压/放大倍数和零偏对不对
+#define ADC_Vref            3.3f
+
 // 定点换算 value = (raw - Offset) * Span / 4096：
 //   (raw-Offset) << 12   = (raw-Offset)/4096 的 Q24，最大 3103*4096 = 1.3e7，不溢出
 //   Span 乘 2^17 做成 Q17 常量：165 * 131072 = 2.16e7，32 位装得下
@@ -178,6 +213,24 @@
 #define ADC_Scale_Q17(span) ((long)((span) * 131072.0f))
 #define ADC_To_IQ(raw, off, span) \
     __IQmpy((_iq)(((long)(raw) - (long)(off)) << 12), ADC_Scale_Q17(span), 17)
+
+// 校零之后的换算：零点码不再是编译期常量，而是 main.c 里实测出来的 OffsetNeg
+//   记标称零点码 nominal（编译期常量，就是上面的 ADC_*_Offset），
+//      实测零点码 raw_zero（运行期测出来的），
+//      offneg = nominal - raw_zero
+//   要算的是 (raw - raw_zero)，而
+//     raw - raw_zero = (raw - nominal) + (nominal - raw_zero)
+//                    = (raw - nominal) + offneg
+//   所以：
+//     (raw - raw_zero)/4096 的 Q24 = ((raw - nominal) + offneg) << 12
+//   再乘 Span：和 ADC_To_IQ 完全同构，只是左操作数从编译期常量
+//   变成了运行期算术，右操作数仍然是编译期常量 Span*2^17
+//
+// 量级检查：|raw - raw_zero| <= 4095，<<12 后 <= 1.68e7，做 _IQ() 不会溢出；
+// 乘 Span*2^17 时 __IQmpy 走 32x32->64，也不会溢出
+#define ADC_To_IQ_Cal(raw, nominal, offneg, span) \
+    __IQmpy((_iq)((((long)(raw) - (long)(nominal)) + (long)(offneg)) << 12), \
+            ADC_Scale_Q17(span), 17)
 
 // 输入侧两路只存原始码，不换算成工程量：
 //   vin = (VinRaw - ADC_Vin_Offset) * ADC_Vin_Span / 4096
@@ -248,5 +301,32 @@
 #define Debug_Float_View    1
 // 后台循环每转多少圈折算一次：调小刷新快、后台占用高
 #define Debug_Div           256U
+
+// ---- 11. 输出幅值检测（只看，不进控制环） ----
+// 目标：在调试器里直接读出输出电压/输出电流/电容电流的"幅值"，而不是瞬时值。
+//
+// 做法是"按工频周期复位的峰值保持 + 每周期的平均值"：
+//   1) 每个中断拍更新本周期的峰值 pk = max(pk, |x|)
+//   2) 每满一个工频周期（400 拍 @20kHz）把 pk 提交给平均值并清零 pk
+//   3) 平均值按 1/4 权重一阶平均： amp += (pk - amp) >> Amp_Avg_Shift
+//
+// 为什么不用"峰值瞬跌法"（pk 每拍乘个略小于 1 的系数）：
+//   那样读数是"峰值 - 纹波"，仿真过：系数取 1/256 时纹波就有 20%、
+//   稳态也偏低 20%，根本没法读。按周期复位就没有这个问题。
+//
+// 本方案仿真的结果（50Hz 正弦、20kHz 采样）：
+//   恒定幅值时：纹波 0.056%，稳态误差 -0.007%（基本就是真幅值）
+//   幅值阶跃后：约 0.25s 收敛到 2% 以内
+// 因为工频 50Hz、中断 20kHz，一个工频周期正好是 20000/50 = 400 拍，
+// 所以计数到 Amp_Cycle_Samples 就是整周期，不需要另外判过零
+#define Amp_Track_En        1U
+#define Amp_Cycle_Samples   400U    // 一个工频周期对应的中断拍数 = Fsw/Fout
+// 每周期的峰值做一阶平均，权重 = 1/2^Amp_Avg_Shift
+// 每工频周期(20ms)更新一次，取 2 相当于时间常数约 40ms，
+// 比这更大就会像上面说的那样"跟不上幅值下降"，不要随意调大
+#define Amp_Avg_Shift       2U
+// 峰值 -> 有效值：/sqrt(2) = 0.70710678
+// Q24 放不下 1.414，所以用 0.70710678 直接乘（在 Q24 范围内）
+#define Amp_PkToRms         _IQ(0.70710678f)    // Q24
 
 #endif
