@@ -6,10 +6,10 @@
  * 硬件链路：
  *   ePWM1 增减计数 TBPRD=1500 -> fsw=20kHz
  *     CTR=ZERO -> SOCA -> ADC
- *        SOC0 丢弃
- *        SOC1 = ADCINA0 输出电流 i_o
- *        SOC2 = ADCINA1 输出电压 v_o
- *        SOC3 = ADCINA2 电感电流 i_L
+ *        SOC0 丢弃（ADCA0，与 SOC1 同通道，修 rev0 首采样 errata）
+ *        SOC1 = ADCA0 输出电压 v_o
+ *        SOC2 = ADCA1 输出电流 i_o
+ *        SOC3 = ADCA2 电感电流 i_L
  *        SOC4 = ADCB1 输入电压 v_in（分压 80/3.3，只监视/保护）
  *        SOC5 = ADCB0 输入电流 i_in（放大 150 倍，只监视/保护）
  *     EOC5 -> ADCINT1 -> CPU 的 ADC_ISR
@@ -148,6 +148,44 @@ volatile Uint16 CalMiss  = 0U;      // 因一致性检查没过而放弃校准的通道数
 volatile Uint16 CalMeanCode[6] = {0U, 0U, 0U, 0U, 0U, 0U};
 volatile Uint16 CalSpread[6]   = {0U, 0U, 0U, 0U, 0U, 0U};
 volatile Uint16 CalValid[6]    = {0U, 0U, 0U, 0U, 0U, 0U};
+
+//===========================================================================
+// 调试观察用：独立全局变量（不再走 Debug_View 结构体）
+//
+// 为什么另开一份：CCS 的 Expressions 窗口解析结构体成员的调试信息时容易
+// 出问题（一直报 identifier not found），而独立全局变量在符号表里就是一个
+// 普通符号，解析稳定得多。
+// 下面这些量都在 main() 初始化末尾被逐个显式写入（都有真实引用），
+// 所以在 Expressions 里直接敲名字就能看到，不用展开结构体。
+// 全部只给调试器看，控制环一律不用。
+//===========================================================================
+volatile float gVoutAmp    = 0.0f;  // 输出电压幅值（峰值）V
+volatile float gVoutAmpRms = 0.0f;  // 输出电压有效值 Vrms
+volatile float gIoutAmp    = 0.0f;  // 输出电流幅值（峰值）A
+volatile float gIoutAmpRms = 0.0f;  // 输出电流有效值 Arms
+volatile float gICapAmp    = 0.0f;  // 电容电流幅值（峰值）A
+volatile float gICapAmpRms = 0.0f;  // 电容电流有效值 Arms
+
+volatile float gCalZeroIoutCode = 0.0f; // 校零实测：输出电流通道平均码
+volatile float gCalZeroVoutCode = 0.0f; // 校零实测：输出电压通道平均码
+volatile float gCalZeroILCode   = 0.0f; // 校零实测：电感电流通道平均码
+volatile float gCalZeroVinCode  = 0.0f; // 校零实测：输入电压通道平均码
+volatile float gCalZeroIinCode  = 0.0f; // 校零实测：输入电流通道平均码
+
+volatile float gCalPinVIout = 0.0f; // 校零时输出电流通道 ADC 引脚电压 V（标称 2.5V）
+volatile float gCalPinVVout = 0.0f; // 校零时输出电压通道 ADC 引脚电压 V（标称 1.5V）
+volatile float gCalPinVIL   = 0.0f; // 校零时电感电流通道 ADC 引脚电压 V（标称 2.5V）
+volatile float gCalPinVVin  = 0.0f; // 校零时输入电压通道 ADC 引脚电压 V（标称 0V）
+volatile float gCalPinVIin  = 0.0f; // 校零时输入电流通道 ADC 引脚电压 V（标称 2.5V）
+
+volatile float gCalSpreadMax = 0.0f; // 5 路里最大的跳幅（ADC 码）
+volatile float gCalMissCnt   = 0.0f; // 没通过一致性检查的通道数，0 = 全部可信
+
+// 固件版本标记：用来确认板子上跑的到底是哪一版
+// ★ 换代码时把 Code_Build 加 1；下载后在 Expressions 里看 Code_Ver / Code_Build
+//   对不上就说明烧进去的还是老固件，先解决这个问题再看别的
+volatile Uint16 Code_Ver   = 4U;    // 1=幅值检测 2=校零 3=独立调试变量 4=修正通道映射
+volatile Uint16 Code_Build = 31U;   // 每次改完重新编译就 +1
 
 //===========================================================================
 // 输出幅值检测（只给调试器看，控制环不用）
@@ -311,6 +349,51 @@ void main(void)
     ERTM;
 
     //=======================================================================
+    //  一次性把调试观察量写成明确的值
+    //  这些独立全局变量在符号表里就是普通符号，CCS 的 Expressions 窗口
+    //  直接敲名字就能看到，不依赖结构体成员解析。
+    //  写在这里（中断已开、进后台循环之前）保证它们都有真实引用，
+    //  链接器不会把未引用的调试数据裁掉。
+    //
+    //  ★ 先看 Code_Ver / Code_Build：
+    //      对得上 = 板子上跑的就是这份代码，再去看别的量
+    //      对不上 = 烧进去的还是老固件，重新编译 + 重新下载再说
+    //=======================================================================
+    Code_Ver   = 4U;        // 4 = 修正通道映射 + 独立调试变量
+    Code_Build = 31U;       // 每次重新编译 +1
+
+    // 校零实测到的各通道平均码（原始 ADC 码，不是 Q24）
+    // 索引顺序：0=Vout 1=Iout 2=IL 3=Vin 4=Iin（与 Adc_ZeroCal 的 ch 一致）
+    gCalZeroVoutCode = (float)CalMeanCode[0];
+    gCalZeroIoutCode = (float)CalMeanCode[1];
+    gCalZeroILCode   = (float)CalMeanCode[2];
+    gCalZeroVinCode  = (float)CalMeanCode[3];
+    gCalZeroIinCode  = (float)CalMeanCode[4];
+
+    // 校零时 ADC 引脚上的实际电压，单位 V，可以直接和万用表对比
+    //   引脚电压 = 平均码 / 4096 * 3.3
+    //   标称应为：Vout 1.5V / Iout 2.5V / IL 2.5V / Vin 0V（分压后）/ Iin 2.5V
+    gCalPinVVout = (float)CalMeanCode[0] * ADC_Vref / 4096.0f;
+    gCalPinVIout = (float)CalMeanCode[1] * ADC_Vref / 4096.0f;
+    gCalPinVIL   = (float)CalMeanCode[2] * ADC_Vref / 4096.0f;
+    gCalPinVVin  = (float)CalMeanCode[3] * ADC_Vref / 4096.0f;
+    gCalPinVIin  = (float)CalMeanCode[4] * ADC_Vref / 4096.0f;
+
+    // 一致性检查结果：0 = 5 路全部可信，校零都已生效
+    {
+        Uint16 k;
+        Uint16 sp;
+
+        sp = 0U;
+        for (k = 0U; k < 5U; k++)
+        {
+            if (CalSpread[k] > sp) { sp = CalSpread[k]; }
+        }
+        gCalSpreadMax = (float)sp;
+        gCalMissCnt   = (float)CalMiss;
+    }
+
+    //=======================================================================
     //  后台死循环：本工程只处理故障复位
     //  运行状态全部在 ADC_ISR 里完成
     //=======================================================================
@@ -378,6 +461,15 @@ void main(void)
             Debug_View.IoutAmpRms  = _IQtoF(_IQmpy(IoutAmp, Amp_PkToRms));
             Debug_View.ICapAmp     = _IQtoF(ICapAmp);
             Debug_View.ICapAmpRms  = _IQtoF(_IQmpy(ICapAmp, Amp_PkToRms));
+
+            // 同步更新一份独立全局变量（同样的值，方便在 Expressions 里
+            // 直接敲名字看，不用展开 Debug_View 结构体）
+            gVoutAmp    = Debug_View.VoutAmp;
+            gVoutAmpRms = Debug_View.VoutAmpRms;
+            gIoutAmp    = Debug_View.IoutAmp;
+            gIoutAmpRms = Debug_View.IoutAmpRms;
+            gICapAmp    = Debug_View.ICapAmp;
+            gICapAmpRms = Debug_View.ICapAmpRms;
 
             // 校零时各通道 ADC 引脚的实际电压，单位 V
             // = 平均码 / 4096 * 3.3，可以直接和万用表打在 ADC 引脚上的读数对比
@@ -467,19 +559,21 @@ void Adc_ZeroCal(void)
     AdcRegs.SOCPRICTL.bit.SOCPRIORITY = 0;
     while (AdcRegs.SOCPRICTL.bit.SOCPRIORITY != 0) {}
 
-    for (ch = 0U; ch < 6U; ch++)
+    for (ch = 0U; ch < 5U; ch++)
     {
         // 把待测通道放到 SOC0（轮询指针重新拨到 SOC0 之后第一个转的就是它）
-        // IO 和 IL 就是要单独测的，因为 ICap = IL - Iout 的零点是两者的差，
-        // 两路各自校零以后 ICap 的零点自然也准了
+        // 通道号直接取 dcac_cfg.h 的 ADC_Ch_* 宏，不在这里另抄一份：
+        // 以后再改通道映射，只改 dcac_cfg.h 一处，这里自动跟着走，
+        // 不会出现"映射改了、校零还校在旧通道上"这种错位
+        // 顺序和 Adc_Config 里的 SOC1~SOC5 一一对应
+        // （SOC0 只是丢样，不单独校准）
         switch (ch)
         {
-            case 0U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iout; break;
-            case 1U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Vout; break;
+            case 0U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Vout; break;
+            case 1U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iout; break;
             case 2U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_IL;   break;
             case 3U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Vin;  break;
-            case 4U: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iin;  break;
-            default: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Dummy; break;
+            default: AdcRegs.ADCSOC0CTL.bit.CHSEL = ADC_Ch_Iin;  break;
         }
 
         sum = 0UL;
@@ -522,8 +616,8 @@ void Adc_ZeroCal(void)
         // 该通道零点码的标称值（编译期常量，和上面 CHSEL 的顺序一一对应）
         switch (ch)
         {
-            case 0U: nominal = (long)ADC_Iout_Offset; break;
-            case 1U: nominal = (long)ADC_Vout_Offset; break;
+            case 0U: nominal = (long)ADC_Vout_Offset; break;
+            case 1U: nominal = (long)ADC_Iout_Offset; break;
             case 2U: nominal = (long)ADC_IL_Offset;   break;
             case 3U: nominal = (long)ADC_Vin_Offset;  break;
             default: nominal = (long)ADC_Iin_Offset;  break;
@@ -544,11 +638,11 @@ void Adc_ZeroCal(void)
 
         switch (ch)
         {
-            case 0U: IoutOffNeg = offneg; break;   // ADCINA0 输出电流零点
-            case 1U: VoutOffNeg = offneg; break;   // ADCINA1 输出电压零点
-            case 2U: ILOffNeg   = offneg; break;   // ADCINA2 电感电流零点
-            case 3U: VinOffNeg  = offneg; break;   // ADCB1   输入电压零点
-            default: IinOffNeg  = offneg; break;   // ADCB0   输入电流零点
+            case 0U: VoutOffNeg = offneg; break;   // ADCA0 输出电压零点
+            case 1U: IoutOffNeg = offneg; break;   // ADCA1 输出电流零点
+            case 2U: ILOffNeg   = offneg; break;   // ADCA2 电感电流零点
+            case 3U: VinOffNeg  = offneg; break;   // ADCB1 输入电压零点
+            default: IinOffNeg  = offneg; break;   // ADCB0 输入电流零点
         }
     }
     // 恢复：轮询指针拨回 SOC0，SOC 挂起标志清掉
@@ -578,9 +672,9 @@ __interrupt void ADC_ISR(void)
 
     // ---- 1. 采样并换算工程量 ----
     // 固定槽位：SOCn 的结果就在 ADCRESULTn 里，直接按下标取，不做任何判断
-    //   ADC_Ch_Dummy -> SOC0/ADCRESULT0，丢样（ADCINA0 的第一次采样不准）
-    //   ADC_Ch_Iout  -> SOC1/ADCRESULT1 输出电流
-    //   ADC_Ch_Vout  -> SOC2/ADCRESULT2 输出电压
+    //   ADC_Ch_Dummy -> SOC0/ADCRESULT0 丢样（ADCA0 的第一次采样不准）
+    //   ADC_Ch_Vout  -> SOC1/ADCRESULT1 输出电压  ← 与 SOC0 同通道，用这一次
+    //   ADC_Ch_Iout  -> SOC2/ADCRESULT2 输出电流
     //   ADC_Ch_IL    -> SOC3/ADCRESULT3 电感电流
     //   ADC_Ch_Vin   -> SOC4/ADCRESULT4 输入电压（只监视）
     //   ADC_Ch_Iin   -> SOC5/ADCRESULT5 输入电流（只监视）
@@ -589,8 +683,8 @@ __interrupt void ADC_ISR(void)
     // 用 ADC_To_IQ_Cal：零点码用实测校零结果（主程序启动时测出来的），
     // 没校准或该校通道被一致性检查挡掉时 OffsetNeg = 0，
     // 此时它和 ADC_To_IQ(标称零点码) 完全等价
-    Iout = ADC_To_IQ_Cal(AdcResult.ADCRESULT1, ADC_Iout_Offset, IoutOffNeg, ADC_Iout_Span);
-    Vout = ADC_To_IQ_Cal(AdcResult.ADCRESULT2, ADC_Vout_Offset, VoutOffNeg, ADC_Vout_Span);
+    Vout = ADC_To_IQ_Cal(AdcResult.ADCRESULT1, ADC_Vout_Offset, VoutOffNeg, ADC_Vout_Span);
+    Iout = ADC_To_IQ_Cal(AdcResult.ADCRESULT2, ADC_Iout_Offset, IoutOffNeg, ADC_Iout_Span);
     IL   = ADC_To_IQ_Cal(AdcResult.ADCRESULT3, ADC_IL_Offset,   ILOffNeg,   ADC_IL_Span);
     ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
 
@@ -758,10 +852,10 @@ __interrupt void ADC_ISR(void)
 
 //===========================================================================
 // ADC 配置函数
-//   SOC0 -> ADCINA0，第一次采样按原设计丢弃
-//   SOC1 -> ADCINA0 输出电流
-//   SOC2 -> ADCINA1 输出电压
-//   SOC3 -> ADCINA2 电感电流
+//   SOC0 -> ADCA0，第一次采样按原设计丢弃（与 SOC1 同通道）
+//   SOC1 -> ADCA0 输出电压
+//   SOC2 -> ADCA1 输出电流
+//   SOC3 -> ADCA2 电感电流
 //   SOC4 -> ADCB1 输入电压（只监视）
 //   SOC5 -> ADCB0 输入电流（只监视）
 //   TRIGSEL=5 : EPWM1 SOCA（CTR=ZERO）
@@ -792,10 +886,11 @@ void Adc_Config(void)
     AdcRegs.INTSEL1N2.bit.INT1CONT  = 1;    // 连续模式！见上面那段说明，不能写 0
     AdcRegs.INTSEL1N2.bit.INT1SEL   = ADC_EOC_For_INT1;  // EOC5 触发 ADCINT1
 
-    // SOC0 丢一次（ADCINA0 复用给 i_o，修 rev0 首采样 errata）
+    // SOC0 丢一次（ADCA0 = 输出电压，与 SOC1 配成同通道连采两次）
+    // 这个配对必须相邻，中间不能插别的通道，否则 rev0 首采样勘误修法失效
     AdcRegs.ADCSOC0CTL.bit.CHSEL    = ADC_Ch_Dummy;
-    AdcRegs.ADCSOC1CTL.bit.CHSEL    = ADC_Ch_Iout;
-    AdcRegs.ADCSOC2CTL.bit.CHSEL    = ADC_Ch_Vout;
+    AdcRegs.ADCSOC1CTL.bit.CHSEL    = ADC_Ch_Vout;
+    AdcRegs.ADCSOC2CTL.bit.CHSEL    = ADC_Ch_Iout;
     AdcRegs.ADCSOC3CTL.bit.CHSEL    = ADC_Ch_IL;
     AdcRegs.ADCSOC4CTL.bit.CHSEL    = ADC_Ch_Vin;
     AdcRegs.ADCSOC5CTL.bit.CHSEL    = ADC_Ch_Iin;

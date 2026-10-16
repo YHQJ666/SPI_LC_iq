@@ -115,11 +115,17 @@
 // SOC 顺序 = 转换顺序：全部 SOC 共用同一个触发源（EPWM1 SOCA）、同样的优先级，
 // 所以每个载波周期都按 SOC0 -> SOC1 -> ... 固定顺序转换。
 // 这种"固定槽位"写法下第 N 个 SOC 的结果一定落在 ADCRESULTn 里，
-// 不依赖轮询指针当拍停在哪儿，比"通道和 ADCRESULT 编号错开"稳得多
-#define ADC_Ch_Dummy    0U      // SOC0 -> ADCINA0，第一次采样，结果丢弃
-#define ADC_Ch_Iout     1U      // SOC1 -> ADCINA0 输出电流（与 SOC0 同通道，配合丢样）
-#define ADC_Ch_Vout     0U      // SOC2 -> ADCINA1 输出电压
-#define ADC_Ch_IL       2U      // SOC3 -> ADCINA2 电感电流
+// 不依赖轮询指针当拍停在哪儿，比"通道和 ADCRESULT 编号错开"稳得多。
+//
+// ★ SOC0 和 SOC1 必须读同一个通道，这是 TI 给的 rev0 芯片勘误修法：
+//   每个 SOC 序列的"第一次采样"结果不准，所以同一通道连采两次、
+//   丢掉第一次只用第二次。这两次必须紧邻，中间不能插别的通道，
+//   否则第二次采到的也不是刚建立的那个值，修法就失效了。
+//   本板子 ADCA0 = 输出电压，所以 SOC0/SOC1 都放 A0，真值取 SOC1。
+#define ADC_Ch_Dummy    0U      // SOC0 -> ADCA0 丢样（与 SOC1 同通道）
+#define ADC_Ch_Vout     0U      // SOC1 -> ADCA0 输出电压   ← 取这一次的
+#define ADC_Ch_Iout     1U      // SOC2 -> ADCA1 输出电流
+#define ADC_Ch_IL       2U      // SOC3 -> ADCA2 电感电流
 #define ADC_Ch_Vin      9U      // SOC4 -> ADCB1 输入电压（只监视）
 #define ADC_Ch_Iin      8U      // SOC5 -> ADCB0 输入电流（只监视）
 
