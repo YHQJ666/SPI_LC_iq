@@ -11,7 +11,7 @@
  *   SOC3 = ADCINA2 电感电流 i_L
  *   SOC4 = ADCB1 输入电压 v_in（分压 80/3.3，只监视/保护）
  *   SOC5 = ADCB0 输入电流 i_in（放大 150 倍，只监视/保护）
- *   控制环只吃 i_o / v_o / i_L，两路输入量原样存进 VinRaw / IinRaw 留给保护
+ *   控制环只吃 i_o / v_o / i_L，输入侧两路只做监视/保护（见 5.4 / 5.5）
  * 控制：电容电流 i_c = i_L - i_o
  *   电压外环 PR(准比例谐振) -> 电容电流给定 -> 电流内环 PI -> 调制比 mod
  *
@@ -133,50 +133,146 @@
 // 否则 ADCINT1 会在新通道转换完成之前就进 ISR，读到的还是上一拍的结果
 #define ADC_EOC_For_INT1 5U     // EOC5（SOC5 = i_in）触发 ADCINT1
 
+// ============================================================================
 // ---- 5. 采样前端标定 ----
-// 调理电路送到 ADC 引脚的电压 Vpin，12 位 ADC 满码 3.3V、4096 码：
-//   code = Vpin / 3.3 * 4096
-//   电流（IL 和 Iout 调理一样，都是 1mΩ 采样电阻 + 20 倍增益）：
-//     Vpin = 2.5 + 0.001*20*I = 2.5 + 0.02*I
-//     I    = (code - 2.5/3.3*4096) * 3.3/4096/0.02
-//          = (code - 3103) * 40.283mA
-//     满码 4096 对应 3.3/0.02 = 165A，实际 0~4095 码 -> -125A ~ +40A
-//   电压：
-//     Vpin = 1.5 + 0.03125*V
-//     V    = (code - 1.5/3.3*4096) * 3.3/4096/0.03125
-//          = (code - 1862) * 25.781mV
-//     满码 4096 对应 3.3/0.03125 = 105.6V，实际 0~4095 码 -> -48V ~ +57.6V
-// 偏置码 3103.03 / 1861.82 取整，残差只有 1.2mA / 4.7mV，
-// 比 1 个 LSB（电流 40mA、电压 26mV）还小，可以忽略
-#define ADC_IL_Offset       3103        // 电流零点 2.5V 对应的码值
-#define ADC_IL_Span         165.0f      // 满码 4096 对应 165A
-#define ADC_Iout_Offset     3103
-#define ADC_Iout_Span       165.0f
-#define ADC_Vout_Offset     1862        // 电压零点 1.5V 对应的码值
-#define ADC_Vout_Span       105.6f      // 满码 4096 对应 105.6V
+//
+// ★ 你只需要填两个数：Vzero 和 K，其余全部由编译器算好，不用手算码值。
+//
+// 每路调理电路送到 ADC 引脚的电压都是这个形式：
+//
+//     Vpin = Vzero + K * X
+//
+//   Vzero : 零输入时引脚上的电压，也就是偏置（V）。纯分压电路填 0
+//   K     : 传递系数，单位 V/物理单位。
+//           分压电路：K = 分压比 = 3.3 / 满量程
+//           电流电路：K = Rsense * 放大倍数
+//   X     : 要测的物理量（V 或 A）
+//
+// 例：输出电压，1.5V 偏置、0.027 V/V（也就是 0.027 V 对应 1V 输出）
+//     #define ADC_Vout_Vzero   1.5f
+//     #define ADC_Vout_K       0.027f
+//     编译器自动算出：零点码 1862、满码量程 122.2V
+//
+// 下面这些中间量都是导出的，不要手改：
+//   ADC_*_Offset = Vzero/Vref*4096   零点对应的 ADC 码（就近取整）
+//   ADC_*_Span   = Vref/K            满码 4096 对应的物理量
+//   ADC_*_PerCode = Span/4096        1 个码对应多少物理量（看分辨率用）
+//
+// 注意 Span 是按"满码 3.3V"算的。如果分压/放大电路在到达 3.3V 之前就
+// 饱和了（比如输入电压分压电路 80V 就到 3.3V），那实际可用量程比 Span 小，
+// 以电路实际不饱和的范围为准。
+// ============================================================================
 
-// ---- 5a. 输入侧两路采样（只做监视/保护，不参与控制环） ----
-// 输入电压：电阻分压 80/3.3
-//   Vpin = Vin * 3.3/80，Vin = 80V 时正好 3.3V（满码）
-//   分压比要按可能的最高输入电压选，超过 80V 就被 3.3V 钳位
-//   Vin = Vpin * 80/3.3 = (code/4096) * 80
-//   零点码 0，满码 4096 对应 80V，即 19.5mV/code
-#define ADC_Vin_Offset      0
-#define ADC_Vin_Span        80.0f       // 满码 4096 对应 80V
+// ADC 满量程（参考）电压。
+//   引脚电压 V = code / 4096 * ADC_Vref
+// 调试器里 CalPinVxxx / VinPinV 就是拿它把码值换算成引脚电压的，
+// 可以直接和万用表打在 ADC 引脚上的读数对比
+#define ADC_Vref            3.3f
 
-// 输入电流：采样电阻 + 150 倍放大
-//   Vpin = 2.5 + 0.001 * 150 * Iin = 2.5 + 0.15 * Iin
-//   Iin  = (code - 2.5/3.3*4096) * 3.3/4096/0.15
-//        = (code - 3103) * 5.371mA
-//   满码 4096 对应 3.3/0.15 = 22A，实际 0~4095 码 -> -16.7A ~ +5.3A
-//   ★ 这里的 0.001 是 1mΩ 采样电阻。换采样电阻只改这两个宏：
-//       Span = 3.3 / (Rsense * 150)，Offset = 2.5/3.3*4096 = 3103（偏置 2.5V 不变时）
-#define ADC_Iin_Offset      3103        // 电流零点 2.5V 对应的码值
-#define ADC_Iin_Span        22.0f       // 满码 4096 对应 22A（1mΩ + 150 倍）
+// ---- 5.1 输出电流 i_o（ADCA1）----
+// 1mΩ 采样电阻 + 20 倍增益：Vpin = 2.5 + 0.02*I
+#define ADC_Iout_Vzero      2.5f        // 零电流时引脚电压 V
+#define ADC_Iout_K          0.02f       // V/A = 0.001 * 20
+
+// ---- 5.2 输出电压 v_o（ADCA0）----
+// 偏置 1.5V + 分压。Vpin = 1.5 + K*V，改 K 就改了量程
+#define ADC_Vout_Vzero      1.5f
+#define ADC_Vout_K          0.027f    //
+
+// ---- 5.3 电感电流 i_L（ADCA2）----
+// 和输出电流调理一样：1mΩ + 20 倍
+#define ADC_IL_Vzero        2.5f
+#define ADC_IL_K            0.02f
+
+// ---- 5.4 输入电压 v_in（ADCB1，直流，只监视）----
+// 电阻分压，无偏置：Vpin = K*Vin
+//   K = 3.3/80 -> 输入 80V 时引脚正好 3.3V
+//   ★ 换分压电阻只改这一个 K = 3.3 / 你要的最高输入电压
+#define ADC_Vin_Vzero       0.0f
+#define ADC_Vin_K           (3.3f / 80.0f)
+
+// ---- 5.5 输入电流 i_in（ADCB0，直流，只监视）----
+// 普通运放放大采样电阻上的压降，没有加偏置：零电流时引脚就是 0V
+//   Vpin = K * Iin，K = Rsense * 放大倍数
+//   ★ 换采样电阻或改放大倍数只改下面这两个
+//     例：1mΩ + 150 倍 -> K=0.15，满码 22A
+//         2mΩ + 150 倍 -> K=0.3，满码 11A（量程减半、分辨率翻倍）
+#define ADC_Iin_Rsense      0.001f      // 采样电阻 Ω
+#define ADC_Iin_Gain        150.0f      // 运放放大倍数
+#define ADC_Iin_Vzero       0.0f        // 零电流引脚电压：运放无偏置，就是 0V
+#define ADC_Iin_K           (ADC_Iin_Rsense * ADC_Iin_Gain)
+
+// ---- 下面全部是导出量，不用手改 ----
+
+// 零点码：Vzero 折算成 12 位码
+#define ADC_OffsetCode(vzero)   ((long)((vzero) / ADC_Vref * 4096.0f + 0.5f))
+// 全码跨度：整个 0~4096 码对应多少物理量（= ADC_Vref/K）
+//   ★ 注意这个数**没有扣掉直流偏置**，不是实际能测的范围，别拿它当量程用。
+//     只用来算每码分辨率。
+#define ADC_SpanOf(k)           (ADC_Vref / (k))
+// 单个码的分辨率：Span/4096
+#define ADC_PerCode(k)          (ADC_SpanOf(k) / 4096.0f)
+
+// 实际可测范围：以零点码为中心，往下到 0 码、往上到满码（4096）
+//   有偏置的通道上下不对称，这才是真正的量程
+//   例：Vout Vzero=1.5V、K=0.027 -> 零点码 1862
+//       往下 1862 码 = 55.56V，往上 (4096-1862) 码 = 66.67V
+//       可测 -55.56V ~ +66.66V（不是 -61.1 ~ +61.1，也不是全跨度 122.22V）
+//   无偏置的通道（Vzero=0）零点码为 0，范围就是 0 ~ SpanOf(K)
+#define ADC_MinOf(vzero, k)     (-((float)ADC_OffsetCode(vzero) / 4096.0f * ADC_SpanOf(k)))
+#define ADC_MaxOf(vzero, k)     ( (float)(4096L - ADC_OffsetCode(vzero)) / 4096.0f * ADC_SpanOf(k))
+
+// 电流（IL / Iout 共用一套参数）
+#define ADC_IL_Offset       ADC_OffsetCode(ADC_IL_Vzero)
+#define ADC_IL_Span         ADC_SpanOf(ADC_IL_K)        // 全跨度，不是量程
+#define ADC_IL_PerCode      ADC_PerCode(ADC_IL_K)
+#define ADC_IL_Min          ADC_MinOf(ADC_IL_Vzero, ADC_IL_K)   // 真实可测下限
+#define ADC_IL_Max          ADC_MaxOf(ADC_IL_Vzero, ADC_IL_K)   // 真实可测上限
+#define ADC_Iout_Offset     ADC_OffsetCode(ADC_Iout_Vzero)
+#define ADC_Iout_Span       ADC_SpanOf(ADC_Iout_K)
+#define ADC_Iout_PerCode    ADC_PerCode(ADC_Iout_K)
+#define ADC_Iout_Min        ADC_MinOf(ADC_Iout_Vzero, ADC_Iout_K)
+#define ADC_Iout_Max        ADC_MaxOf(ADC_Iout_Vzero, ADC_Iout_K)
+
+// 输出电压
+#define ADC_Vout_Offset     ADC_OffsetCode(ADC_Vout_Vzero)
+#define ADC_Vout_Span       ADC_SpanOf(ADC_Vout_K)
+#define ADC_Vout_PerCode    ADC_PerCode(ADC_Vout_K)
+#define ADC_Vout_Min        ADC_MinOf(ADC_Vout_Vzero, ADC_Vout_K)
+#define ADC_Vout_Max        ADC_MaxOf(ADC_Vout_Vzero, ADC_Vout_K)
+
+// 输入电压（直流，无偏置）
+#define ADC_Vin_Offset      ADC_OffsetCode(ADC_Vin_Vzero)
+#define ADC_Vin_Span        ADC_SpanOf(ADC_Vin_K)
+#define ADC_Vin_PerCode     ADC_PerCode(ADC_Vin_K)
+#define ADC_Vin_Min         ADC_MinOf(ADC_Vin_Vzero, ADC_Vin_K)
+#define ADC_Vin_Max         ADC_MaxOf(ADC_Vin_Vzero, ADC_Vin_K)
+
+// 输入电流（直流，运放无偏置）
+#define ADC_Iin_Offset      ADC_OffsetCode(ADC_Iin_Vzero)
+#define ADC_Iin_Span        ADC_SpanOf(ADC_Iin_K)
+#define ADC_Iin_PerCode     ADC_PerCode(ADC_Iin_K)
+#define ADC_Iin_Min         ADC_MinOf(ADC_Iin_Vzero, ADC_Iin_K)
+#define ADC_Iin_Max         ADC_MaxOf(ADC_Iin_Vzero, ADC_Iin_K)
+
+// ---- 当前参数下编译器会算出这些值（对照用，改完 K/Vzero 后自己核一下）----
+//   通道     Vzero     K     零点码      全跨度                  可测范围                  1码分辨率
+//   Vout  1.5V    0.027   1862    122.22V   -55.56V ~ +66.66V    29.84mV
+//   Iout  2.5V    0.02    3103    165.00A   -125.0A ~ +40.00A    40.28mA
+//   IL    2.5V    0.02    3103    165.00A   -125.0A ~ +40.00A    40.28mA
+//   Vin   0V      3.3/80  0       80.00V      0.00V ~ +80.00V    19.53mV
+//   Iin   0V      0.15    0       22.00A      0.00A ~ +22.00A     5.37mA
+//
+//   对比：Vout 原来 K=0.03125 时
+//         全跨度 105.60V，可测 -48.00V ~ +57.60V，分辨率 25.78mV
+//   K 变小 -> 全跨度和可测范围都变大，但分辨率变粗
+//
+//   无偏置的两路（Vin/Iin）零点码为 0，范围就是 0 ~ 全跨度，不存在不对称
 
 // ---- 5b. ADC 零点校准（软件校零） ----
-// 上面那组 Offset 是"标称值"，按 2.5V/1.5V 偏置算出来的。实际板子元件有误差
-// 和温漂，真零点会偏几十个码。校零做的事：让各路调理电路处于静止零输入，
+// 上面那组 Offset 是"标称值"，由各路的 Vzero 偏置算出来（Vout 1.5V、
+// Iout/IL 2.5V、Vin/Iin 无偏置为 0）。实际板子元件有误差和温漂，
+// 真零点会偏几十个码。校零做的事：让各路调理电路处于静止零输入，
 // 把这几十/几百拍的 ADC 码值平均出来，当成真正的零点码。
 //
 // 和 TI 的 AdcOffsetSelfCal() 是两回事，别搞混：
@@ -204,18 +300,14 @@
 #define ADC_ZeroCal_MaxSpread   64
 #define ADC_ZeroCal_SpreadN     64U     // 用前多少点做一致性检查
 
-// ADC 满量程（参考）电压，用来把原始码直接换算成"引脚电压"：
-//   引脚电压 V = code / 4096 * ADC_Vref
-// 调试器里看 Debug_View.CalPinVxxx 就是拿这个算的，单位 V，
-// 可以直接和万用表打在 ADC 引脚上的读数对比，
-// 用来验证调理电路的分压/放大倍数和零偏对不对
-#define ADC_Vref            3.3f
-
 // 定点换算 value = (raw - Offset) * Span / 4096：
 //   (raw-Offset) << 12   = (raw-Offset)/4096 的 Q24，最大 3103*4096 = 1.3e7，不溢出
 //   Span 乘 2^17 做成 Q17 常量：165 * 131072 = 2.16e7，32 位装得下
 //   __IQmpy(A,B,Q) = (A*B)>>Q，Q24 × Q17 >> 17 的结果正好还是 Q24
 // Span 本身超过 Q24 的 ±128（165），所以只能走 Q17，不能写成 _IQmpy
+// 注：浮点乘出来再截断成整数，可能比精确值小 1（例：22.0*131072 = 2883583.9999
+//     -> 2883583）。相对误差 ~3e-7，比 1 个 ADC 码（1/4096 = 2.4e-4）小三个
+//     数量级，对换算精度没有影响
 #define ADC_Scale_Q17(span) ((long)((span) * 131072.0f))
 #define ADC_To_IQ(raw, off, span) \
     __IQmpy((_iq)(((long)(raw) - (long)(off)) << 12), ADC_Scale_Q17(span), 17)
@@ -238,11 +330,11 @@
     __IQmpy((_iq)((((long)(raw) - (long)(nominal)) + (long)(offneg)) << 12), \
             ADC_Scale_Q17(span), 17)
 
-// 输入侧两路只存原始码，不换算成工程量：
-//   vin = (VinRaw - ADC_Vin_Offset) * ADC_Vin_Span / 4096
-//   iin = (IinRaw - ADC_Iin_Offset) * ADC_Iin_Span / 4096
+// 输入侧两路（直流）的换算和上面同构：
+//   vin = ((raw - ADC_Vin_Offset) + VinOffNeg) * ADC_Vin_Span / 4096
+//   iin = ((raw - ADC_Iin_Offset) + IinOffNeg) * ADC_Iin_Span / 4096
 // 后面加保护阈值时，既可以直接比码值（省一次乘法），也可以按上面公式算成
-// Q24 再和 _IQ(阈值) 比；原始码在中断里原样存下来最省时间
+// Q24 再和 _IQ(阈值) 比
 
 // ---- 6. 控制环参数（待整定） ----
 #define W0_V_F          314.159265f     // 电压环 2*pi*50 谐振角频率
@@ -308,31 +400,26 @@
 // 后台循环每转多少圈折算一次：调小刷新快、后台占用高
 #define Debug_Div           256U
 
-// ---- 11. 输出幅值检测（只看，不进控制环） ----
-// 目标：在调试器里直接读出输出电压/输出电流/电容电流的"幅值"，而不是瞬时值。
+// ---- 11. 有效值 / 平均值计算（只看，不进控制环） ----
+// 做法参考 TI 参考设计 voltagesourceinvlcfltr 里的 sineAnalyzerWithPowerMeas.c：
+//   ISR 里每拍累加平方和 sum(x2)，满一个工频周期后 RMS = sqrt(sum(x2)/N)。
+//   这是有效值的定义式，对任意波形都精确；噪声进的是功率平均，
+//   不会被当成峰值放大，所以比"峰值保持"那套又短又准。
 //
-// 做法是"按工频周期复位的峰值保持 + 每周期的平均值"：
-//   1) 每个中断拍更新本周期的峰值 pk = max(pk, |x|)
-//   2) 每满一个工频周期（400 拍 @20kHz）把 pk 提交给平均值并清零 pk
-//   3) 平均值按 1/4 权重一阶平均： amp += (pk - amp) >> Amp_Avg_Shift
+// 和 TI 原版的差别（为什么不原样照抄）：
+//   TI 用"过零检测"判周期（prevSign/currSign），再配 nSamplesMin/Max
+//   做电网频率健全性判断。本工程输出是固定 50Hz、中断固定 20kHz，
+//   两者严格成整数比，每 Rms_Cycle_Samples 拍正好一个整周期，
+//   直接用计数更简单也更稳，不需要过零逻辑。
+//   TI 那个 threshold = 0.08 是它 620V 量程下的归一化死区（约 50V），
+//   本工程 24V 量级根本不能用，所以这里不做阈值判断。
 //
-// 为什么不用"峰值瞬跌法"（pk 每拍乘个略小于 1 的系数）：
-//   那样读数是"峰值 - 纹波"，仿真过：系数取 1/256 时纹波就有 20%、
-//   稳态也偏低 20%，根本没法读。按周期复位就没有这个问题。
+// 累加器用 64 位（long）：
+//   sum(x2) 是 Q48 量级。以电容电流为例，|x| 最大 8A = 8*2^24 ≈ 1.34e8，
+//   x2 ≈ 1.8e16，乘 400 拍 ≈ 7.2e18，64 位上限 9.2e18，装得下。
+//   量程 128 那种极端值不在本工程出现（见 dcac_cfg.h 开头的定点化说明）。
 //
-// 本方案仿真的结果（50Hz 正弦、20kHz 采样）：
-//   恒定幅值时：纹波 0.056%，稳态误差 -0.007%（基本就是真幅值）
-//   幅值阶跃后：约 0.25s 收敛到 2% 以内
-// 因为工频 50Hz、中断 20kHz，一个工频周期正好是 20000/50 = 400 拍，
-// 所以计数到 Amp_Cycle_Samples 就是整周期，不需要另外判过零
-#define Amp_Track_En        1U
-#define Amp_Cycle_Samples   400U    // 一个工频周期对应的中断拍数 = Fsw/Fout
-// 每周期的峰值做一阶平均，权重 = 1/2^Amp_Avg_Shift
-// 每工频周期(20ms)更新一次，取 2 相当于时间常数约 40ms，
-// 比这更大就会像上面说的那样"跟不上幅值下降"，不要随意调大
-#define Amp_Avg_Shift       2U
-// 峰值 -> 有效值：/sqrt(2) = 0.70710678
-// Q24 放不下 1.414，所以用 0.70710678 直接乘（在 Q24 范围内）
-#define Amp_PkToRms         _IQ(0.70710678f)    // Q24
+// 取 400 拍 = Fsw/Fout = 20000/50，正好一个工频周期
+#define Rms_Cycle_Samples   400U
 
 #endif

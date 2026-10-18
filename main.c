@@ -39,6 +39,7 @@
 #include "DSP28x_Project.h"             // 项目顶层主头文件
 #include "DSP2803x_GlobalPrototypes.h"  // 全局函数原型声明文件
 #include "DSP2803x_EPwm_defines.h"
+#include <math.h>
 #include "IQmathLib.h"                  // IQ 定点数学库（GLOBAL_Q 已在 dcac_cfg.h 里定为 24）
 #include "dcac_cfg.h"
 #include "pid.h"
@@ -117,8 +118,8 @@ volatile _iq  RefRamp = 0;          // 软启动给定峰值
 // 换算成工程量（加保护阈值时用）：
 //   输入电压 V = (VinRaw - ADC_Vin_Offset) * ADC_Vin_Span / 4096
 //   输入电流 A = (IinRaw - ADC_Iin_Offset) * ADC_Iin_Span / 4096
-volatile Uint16 VinRaw = 0U;        // ADCB1 输入电压原始码（0 -> 0V，4096 -> 80V）
-volatile Uint16 IinRaw = 0U;        // ADCB0 输入电流原始码（3103 -> 0A，量程 22A）
+volatile _iq  Vin = 0;              // 输入电压 V（只监视）
+volatile _iq  Iin = 0;              // 输入电流 A（只监视）
 
 //===========================================================================
 // ADC 零点校准结果
@@ -150,55 +151,15 @@ volatile Uint16 CalSpread[6]   = {0U, 0U, 0U, 0U, 0U, 0U};
 volatile Uint16 CalValid[6]    = {0U, 0U, 0U, 0U, 0U, 0U};
 
 //===========================================================================
-// 调试观察用：独立全局变量（不再走 Debug_View 结构体）
-//
-// 为什么另开一份：CCS 的 Expressions 窗口解析结构体成员的调试信息时容易
-// 出问题（一直报 identifier not found），而独立全局变量在符号表里就是一个
-// 普通符号，解析稳定得多。
-// 下面这些量都在 main() 初始化末尾被逐个显式写入（都有真实引用），
-// 所以在 Expressions 里直接敲名字就能看到，不用展开结构体。
-// 全部只给调试器看，控制环一律不用。
+// 有效值 / 平均值累加器（真有效值，做法参考 TI sineAnalyzerWithPowerMeas）
 //===========================================================================
-volatile float gVoutAmp    = 0.0f;  // 输出电压幅值（峰值）V
-volatile float gVoutAmpRms = 0.0f;  // 输出电压有效值 Vrms
-volatile float gIoutAmp    = 0.0f;  // 输出电流幅值（峰值）A
-volatile float gIoutAmpRms = 0.0f;  // 输出电流有效值 Arms
-volatile float gICapAmp    = 0.0f;  // 电容电流幅值（峰值）A
-volatile float gICapAmpRms = 0.0f;  // 电容电流有效值 Arms
-
-volatile float gCalZeroIoutCode = 0.0f; // 校零实测：输出电流通道平均码
-volatile float gCalZeroVoutCode = 0.0f; // 校零实测：输出电压通道平均码
-volatile float gCalZeroILCode   = 0.0f; // 校零实测：电感电流通道平均码
-volatile float gCalZeroVinCode  = 0.0f; // 校零实测：输入电压通道平均码
-volatile float gCalZeroIinCode  = 0.0f; // 校零实测：输入电流通道平均码
-
-volatile float gCalPinVIout = 0.0f; // 校零时输出电流通道 ADC 引脚电压 V（标称 2.5V）
-volatile float gCalPinVVout = 0.0f; // 校零时输出电压通道 ADC 引脚电压 V（标称 1.5V）
-volatile float gCalPinVIL   = 0.0f; // 校零时电感电流通道 ADC 引脚电压 V（标称 2.5V）
-volatile float gCalPinVVin  = 0.0f; // 校零时输入电压通道 ADC 引脚电压 V（标称 0V）
-volatile float gCalPinVIin  = 0.0f; // 校零时输入电流通道 ADC 引脚电压 V（标称 2.5V）
-
-volatile float gCalSpreadMax = 0.0f; // 5 路里最大的跳幅（ADC 码）
-volatile float gCalMissCnt   = 0.0f; // 没通过一致性检查的通道数，0 = 全部可信
-
-// 固件版本标记：用来确认板子上跑的到底是哪一版
-// ★ 换代码时把 Code_Build 加 1；下载后在 Expressions 里看 Code_Ver / Code_Build
-//   对不上就说明烧进去的还是老固件，先解决这个问题再看别的
-volatile Uint16 Code_Ver   = 4U;    // 1=幅值检测 2=校零 3=独立调试变量 4=修正通道映射
-volatile Uint16 Code_Build = 31U;   // 每次改完重新编译就 +1
-
-//===========================================================================
-// 输出幅值检测（只给调试器看，控制环不用）
-//   按工频周期复位的峰值保持 + 每周期一阶平均，见 dcac_cfg.h 第 11 节说明
-//   仿真实测：稳态纹波 0.056%，幅值阶跃后约 0.25s 收敛到 2% 以内
-//===========================================================================
-volatile _iq VoutAmp = 0;           // 输出电压幅值 V（峰值）
-volatile _iq IoutAmp = 0;           // 输出电流幅值 A（峰值）
-volatile _iq ICapAmp = 0;           // 电容电流幅值 A（峰值）
-volatile _iq VpkAcc  = 0;           // 本周期的运行峰值（内部用）
-volatile _iq IpkAcc  = 0;
-volatile _iq CpkAcc  = 0;
-volatile Uint16 AmpCnt = 0U;        // 工频周期计数，满 Amp_Cycle_Samples 提交一次
+volatile long RmsVoutSq = 0L;
+volatile long RmsIoutSq = 0L;
+volatile long RmsICapSq = 0L;
+volatile long AvgVinSum = 0L;
+volatile long AvgIinSum = 0L;
+volatile Uint16 RmsCnt    = 0U;
+volatile Uint16 RmsCommit = 0U;
 
 volatile _iq   dbgSin   = 0;
 
@@ -225,6 +186,8 @@ volatile struct
     float Iout;         // 输出电流 A
     float IL;           // 电感电流 A
     float ICap;         // 电容电流 A = IL - Iout
+    float Vin;          // 输入电压 V
+    float Iin;          // 输入电流 A
     float Vref;         // 电压给定 V
     float IRef;         // 电容电流给定 A
     float RefRamp;      // 软启动给定峰值 V
@@ -236,13 +199,18 @@ volatile struct
     float PI_Integral;  // 电流环积分项
     float PI_Out;       // 电流环输出（调制比）
 
-    // 幅值（峰值保持 + 每工频周期平均的结果，只给调试器看）
-    float VoutAmp;      // 输出电压幅值 V（峰值）
-    float VoutAmpRms;   // 输出电压幅值 Vrms = VoutAmp/sqrt(2)
-    float IoutAmp;      // 输出电流幅值 A（峰值）
-    float IoutAmpRms;   // 输出电流幅值 Arms
-    float ICapAmp;      // 电容电流幅值 A（峰值）
-    float ICapAmpRms;   // 电容电流幅值 Arms
+    // 有效值（一个工频周期算一次，真有效值）
+    float VoutRms;      // 输出电压有效值 Vrms
+    float IoutRms;      // 输出电流有效值 Arms
+    float ICapRms;      // 电容电流有效值 Arms
+    float VoutAmp;      // 输出电压幅值 V（= VoutRms*1.414，正弦下精确）
+    float IoutAmp;      // 输出电流幅值 A
+
+    // 输入侧（直流）平均码 / 平均电压
+    float VinCode;      // 输入电压 ADC 平均码（12 位，0~4095）
+    float IinCode;      // 输入电流 ADC 平均码
+    float VinPinV;      // 输入电压 ADC 引脚平均电压 V（分压后的，标称 0V）
+    float IinPinV;      // 输入电流 ADC 引脚平均电压 V（标称 0V）
 
     // 校零时各通道 ADC 引脚上的实际电压（V）
     // 就是"零输入时引脚上的基准电压"，例如 2.48 / 1.49 这种数，
@@ -251,9 +219,7 @@ volatile struct
     float CalPinVVout;  // 输出电压通道引脚电压，标称 1.5V
     float CalPinVIL;    // 电感电流通道引脚电压，标称 2.5V
     float CalPinVVin;   // 输入电压通道引脚电压，标称 0V（分压后）
-    float CalPinVIin;   // 输入电流通道引脚电压，标称 2.5V
-    float CalSpreadMax; // 各通道一致性检查里最大的 (max-min)，单位：ADC 码
-    float CalMissCnt;   // 一致性检查没过而放弃校准的通道数（0 = 全部可信）
+    float CalPinVIin;   // 输入电流通道引脚电压，标称 0V
 } Debug_View;
 
 static Uint16 Debug_Count = 0U;     // 后台循环分频计数
@@ -349,51 +315,6 @@ void main(void)
     ERTM;
 
     //=======================================================================
-    //  一次性把调试观察量写成明确的值
-    //  这些独立全局变量在符号表里就是普通符号，CCS 的 Expressions 窗口
-    //  直接敲名字就能看到，不依赖结构体成员解析。
-    //  写在这里（中断已开、进后台循环之前）保证它们都有真实引用，
-    //  链接器不会把未引用的调试数据裁掉。
-    //
-    //  ★ 先看 Code_Ver / Code_Build：
-    //      对得上 = 板子上跑的就是这份代码，再去看别的量
-    //      对不上 = 烧进去的还是老固件，重新编译 + 重新下载再说
-    //=======================================================================
-    Code_Ver   = 4U;        // 4 = 修正通道映射 + 独立调试变量
-    Code_Build = 31U;       // 每次重新编译 +1
-
-    // 校零实测到的各通道平均码（原始 ADC 码，不是 Q24）
-    // 索引顺序：0=Vout 1=Iout 2=IL 3=Vin 4=Iin（与 Adc_ZeroCal 的 ch 一致）
-    gCalZeroVoutCode = (float)CalMeanCode[0];
-    gCalZeroIoutCode = (float)CalMeanCode[1];
-    gCalZeroILCode   = (float)CalMeanCode[2];
-    gCalZeroVinCode  = (float)CalMeanCode[3];
-    gCalZeroIinCode  = (float)CalMeanCode[4];
-
-    // 校零时 ADC 引脚上的实际电压，单位 V，可以直接和万用表对比
-    //   引脚电压 = 平均码 / 4096 * 3.3
-    //   标称应为：Vout 1.5V / Iout 2.5V / IL 2.5V / Vin 0V（分压后）/ Iin 2.5V
-    gCalPinVVout = (float)CalMeanCode[0] * ADC_Vref / 4096.0f;
-    gCalPinVIout = (float)CalMeanCode[1] * ADC_Vref / 4096.0f;
-    gCalPinVIL   = (float)CalMeanCode[2] * ADC_Vref / 4096.0f;
-    gCalPinVVin  = (float)CalMeanCode[3] * ADC_Vref / 4096.0f;
-    gCalPinVIin  = (float)CalMeanCode[4] * ADC_Vref / 4096.0f;
-
-    // 一致性检查结果：0 = 5 路全部可信，校零都已生效
-    {
-        Uint16 k;
-        Uint16 sp;
-
-        sp = 0U;
-        for (k = 0U; k < 5U; k++)
-        {
-            if (CalSpread[k] > sp) { sp = CalSpread[k]; }
-        }
-        gCalSpreadMax = (float)sp;
-        gCalMissCnt   = (float)CalMiss;
-    }
-
-    //=======================================================================
     //  后台死循环：本工程只处理故障复位
     //  运行状态全部在 ADC_ISR 里完成
     //=======================================================================
@@ -435,72 +356,86 @@ void main(void)
 #if (Debug_Float_View == 1)
         // Q24 -> 工程量的调试镜像。后台循环是空转的，这里分频折算，
         // 别把 CPU 全吃在调试换算上（要更快就把 Debug_Div 调小）
-        if (++Debug_Count >= Debug_Div)
+        if (Debug_Div == 0U)
         {
             Debug_Count = 0U;
+        }
+        else
+        {
+            if (++Debug_Count < Debug_Div)
+            {
+                continue;
+            }
+            Debug_Count = 0U;
+        }
 
+        {
+            // 有效值 / 幅值：用 ISR 累加好的平方和算，每工频周期一次
+            if (RmsCommit != 0U)
+            {
+                float v;
+                float i2;
+                float c2;
+
+                RmsCommit = 0U;
+
+                v  = (float)(RmsVoutSq >> 24) / (float)Rms_Cycle_Samples;
+                i2 = (float)(RmsIoutSq >> 24) / (float)Rms_Cycle_Samples;
+                c2 = (float)(RmsICapSq >> 24) / (float)Rms_Cycle_Samples;
+
+                Debug_View.VoutRms = sqrtf(v)  / 16777216.0f;
+                Debug_View.IoutRms = sqrtf(i2) / 16777216.0f;
+                Debug_View.ICapRms = sqrtf(c2) / 16777216.0f;
+
+                Debug_View.VoutAmp = Debug_View.VoutRms * 1.41421356f;
+                Debug_View.IoutAmp = Debug_View.IoutRms * 1.41421356f;
+
+                Debug_View.Vin = (float)AvgVinSum / (float)Rms_Cycle_Samples
+                               / 16777216.0f;
+                Debug_View.Iin = (float)AvgIinSum / (float)Rms_Cycle_Samples
+                               / 16777216.0f;
+
+                Debug_View.VinCode = (float)AvgVinSum / (float)Rms_Cycle_Samples
+                                   / 16777216.0f / ADC_Vin_Span * 4096.0f
+                                   + (float)ADC_Vin_Offset;
+                Debug_View.IinCode = (float)AvgIinSum / (float)Rms_Cycle_Samples
+                                   / 16777216.0f / ADC_Iin_Span * 4096.0f
+                                   + (float)ADC_Iin_Offset;
+                Debug_View.VinPinV = Debug_View.VinCode * ADC_Vref / 4096.0f;
+                Debug_View.IinPinV = Debug_View.IinCode * ADC_Vref / 4096.0f;
+
+                RmsVoutSq = 0L;
+                RmsIoutSq = 0L;
+                RmsICapSq = 0L;
+                AvgVinSum = 0L;
+                AvgIinSum = 0L;
+            }
+
+            // 瞬时值：每次折算都刷新
             Debug_View.Vout        = _IQtoF(Vout);
             Debug_View.Iout        = _IQtoF(Iout);
             Debug_View.IL          = _IQtoF(IL);
             Debug_View.ICap        = _IQtoF(ICap);
             Debug_View.Vref        = _IQtoF(Vref);
             Debug_View.IRef        = _IQtoF(IRef);
-            Debug_View.RefRamp     = _IQtoF(RefRamp);
             Debug_View.Mod         = _IQtoF(Mod);
-            Debug_View.Phase       = (float)PhaseAcc / 16777216.0f;
+            Debug_View.RefRamp     = _IQtoF(RefRamp);
             Debug_View.PR_Err      = _IQtoF(PR_V.Err);
             Debug_View.PR_Out      = _IQtoF(PR_V.Out);
             Debug_View.PI_Err      = _IQtoF(PI_I.Err);
             Debug_View.PI_Integral = _IQtoF(PI_I.Integral);
             Debug_View.PI_Out      = _IQtoF(PI_I.Out);
 
-            // 幅值：Amp_* 里存的是峰值，Rms 由峰值乘 0.70710678 得到
-            Debug_View.VoutAmp     = _IQtoF(VoutAmp);
-            Debug_View.VoutAmpRms  = _IQtoF(_IQmpy(VoutAmp, Amp_PkToRms));
-            Debug_View.IoutAmp     = _IQtoF(IoutAmp);
-            Debug_View.IoutAmpRms  = _IQtoF(_IQmpy(IoutAmp, Amp_PkToRms));
-            Debug_View.ICapAmp     = _IQtoF(ICapAmp);
-            Debug_View.ICapAmpRms  = _IQtoF(_IQmpy(ICapAmp, Amp_PkToRms));
-
-            // 同步更新一份独立全局变量（同样的值，方便在 Expressions 里
-            // 直接敲名字看，不用展开 Debug_View 结构体）
-            gVoutAmp    = Debug_View.VoutAmp;
-            gVoutAmpRms = Debug_View.VoutAmpRms;
-            gIoutAmp    = Debug_View.IoutAmp;
-            gIoutAmpRms = Debug_View.IoutAmpRms;
-            gICapAmp    = Debug_View.ICapAmp;
-            gICapAmpRms = Debug_View.ICapAmpRms;
-
             // 校零时各通道 ADC 引脚的实际电压，单位 V
             // = 平均码 / 4096 * 3.3，可以直接和万用表打在 ADC 引脚上的读数对比
-            // 引脚电压 × 分压/放大倍数 就是输入端的物理量，例如：
-            //   CalPinVIout 2.48V -> 对应输出电流 (2.48-2.5)/0.02 = -1.0A
-            //   CalPinVVout 1.49V -> 对应输出电压 (1.49-1.5)/0.03125 = -0.32V
-            //   CalPinVVin  分压 80/3.3，引脚 0V 对应输入 0V，满码 3.3V 对应 80V
-            Debug_View.CalPinVIout = (float)CalMeanCode[0] * ADC_Vref / 4096.0f;
-            Debug_View.CalPinVVout = (float)CalMeanCode[1] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVVout = (float)CalMeanCode[0] * ADC_Vref / 4096.0f;
+            Debug_View.CalPinVIout = (float)CalMeanCode[1] * ADC_Vref / 4096.0f;
             Debug_View.CalPinVIL   = (float)CalMeanCode[2] * ADC_Vref / 4096.0f;
             Debug_View.CalPinVVin  = (float)CalMeanCode[3] * ADC_Vref / 4096.0f;
             Debug_View.CalPinVIin  = (float)CalMeanCode[4] * ADC_Vref / 4096.0f;
-
-            // 一致性检查里最大的跳幅（码），以及被放弃校准的通道数
-            // CalMissCnt = 0 说明 5 路全部通过检查，校零都已生效
-            // 哪一路没过可以单独看 CalSpread[0..4] 和 CalValid[0..4]
-            {
-                Uint16 k;
-                Uint16 sp;
-
-                sp = 0U;
-                for (k = 0U; k < 5U; k++)
-                {
-                    if (CalSpread[k] > sp) { sp = CalSpread[k]; }
-                }
-                Debug_View.CalSpreadMax = (float)sp;
-                Debug_View.CalMissCnt   = (float)CalMiss;
-            }
         }
-#endif
     }
+#endif
 }
 
 //===========================================================================
@@ -691,41 +626,21 @@ __interrupt void ADC_ISR(void)
     // 输入电压（ADCB1）/ 输入电流（ADCB0）：只存原始码，不换算、不参与控制环。
     // 中断里一个乘法都不多做，后面加输入保护时再按 dcac_cfg.h 里的
     // ADC_Vin_*/ADC_Iin_* 换算，或者直接拿码值和阈值码值比较
-    VinRaw = AdcResult.ADCRESULT4;
-    IinRaw = AdcResult.ADCRESULT5;
+    Vin = ADC_To_IQ_Cal(AdcResult.ADCRESULT4, ADC_Vin_Offset, VinOffNeg, ADC_Vin_Span);
+    Iin = ADC_To_IQ_Cal(AdcResult.ADCRESULT5, ADC_Iin_Offset, IinOffNeg, ADC_Iin_Span);
 
-#if (Amp_Track_En == 1)
-    // ---- 1b. 幅值检测：按工频周期复位的峰值保持 ----
-    // 只给调试器看，完全不进控制环。每个中断拍做 3 次"取绝对值 + 比较"，
-    // 超不过就不动，代价极小；每满一个工频周期（400 拍 @20kHz）才提交一次
-    // 平均值。原理和滤波系数怎么定的见 dcac_cfg.h 第 11 节
+    // ---- 1b. 有效值 / 平均值累加 ----
+    RmsVoutSq += _IQmpy((long)Vout, (long)Vout);
+    RmsIoutSq += _IQmpy((long)Iout, (long)Iout);
+    RmsICapSq += _IQmpy((long)ICap, (long)ICap);
+    AvgVinSum += Vin;
+    AvgIinSum += Iin;
+
+    if (++RmsCnt >= Rms_Cycle_Samples)
     {
-        _iq ax;
-
-        ax = (Vout > 0) ? Vout : -Vout;
-        if (ax > VpkAcc) { VpkAcc = ax; }
-
-        ax = (Iout > 0) ? Iout : -Iout;
-        if (ax > IpkAcc) { IpkAcc = ax; }
-
-        ax = (ICap > 0) ? ICap : -ICap;
-        if (ax > CpkAcc) { CpkAcc = ax; }
-
-        if (++AmpCnt >= Amp_Cycle_Samples)
-        {
-            AmpCnt = 0U;
-
-            // amp += (pk - amp) >> Amp_Avg_Shift，等价于一阶低通
-            VoutAmp += (VpkAcc - VoutAmp) >> Amp_Avg_Shift;
-            IoutAmp += (IpkAcc - IoutAmp) >> Amp_Avg_Shift;
-            ICapAmp += (CpkAcc - ICapAmp) >> Amp_Avg_Shift;
-
-            VpkAcc = 0;     // 清掉本周期峰值，下个周期重新找
-            IpkAcc = 0;
-            CpkAcc = 0;
-        }
+        RmsCnt = 0U;
+        RmsCommit = 1U;
     }
-#endif
 
 #if (Debug_Fixed_Mod_En == 1)
 
