@@ -1,21 +1,21 @@
 /*
  * 28035_RAM_lnk.cmd
  *
- * F28035 µ¥ÏàÀëÍøÄæ±ä£¨È«²¿ÔÚ CPU ÉÏÔËÐÐ£©RAM Á´½ÓÃüÁîÎÄ¼þ
+ * F28035 å•ç›¸ç¦»ç½‘é€†å˜ï¼ˆå…¨éƒ¨åœ¨ CPU ä¸Šè¿è¡Œï¼‰RAM é“¾æŽ¥å‘½ä»¤æ–‡ä»¶
  *
- * CLA ÒÑ¾­²»ÔÙÊ¹ÓÃ£¬ËùÒÔ L1/L2/L3 È«²¿¹é»¹¸ø CPU£¬´úÂë·ÅÔÚ L1+L2+L3£¬
- * Êý¾Ý·ÅÔÚ L0 ºÍ M1£¬M0 ·Å ramfuncs ºÍ³õÊ¼»¯±í¡£ÕûÆ¬ SARAM ¶¼¿ÉÒÔÓÃ¡£
+ * CLA å·²ç»ä¸å†ä½¿ç”¨ï¼Œæ‰€ä»¥ L1/L2/L3 å…¨éƒ¨å½’è¿˜ç»™ CPUï¼Œä»£ç æ”¾åœ¨ L1+L2+L3ï¼Œ
+ * æ•°æ®æ”¾åœ¨ L0 å’Œ M1ï¼ŒM0 æ”¾ ramfuncs å’Œåˆå§‹åŒ–è¡¨ã€‚æ•´ç‰‡ SARAM éƒ½å¯ä»¥ç”¨ã€‚
  *
- * ´æ´¢Æ÷·ÖÅä£º
+ * å­˜å‚¨å™¨åˆ†é…ï¼š
  *   M0  0x000050~0x0003FF  944 word   ramfuncs / .pinit / .switch
- *   M1  0x000480~0x0007FF  896 word   Õ»
- *   L0  0x008000~0x0087FF  2048 word  Êý¾Ý£¨.ebss / .econst£©
+ *   M1  0x000480~0x0007FF  896 word   æ ˆ
+ *   L0  0x008000~0x0087FF  2048 word  æ•°æ®ï¼ˆ.ebss / .econstï¼‰
  *   L1  0x008800~0x008BFF  1024 word  \
- *   L2  0x008C00~0x008FFF  1024 word   > Á¬ÆðÀ´·Å´úÂë£¨.text / .cinit / IQmath£©
+ *   L2  0x008C00~0x008FFF  1024 word   > è¿žèµ·æ¥æ”¾ä»£ç ï¼ˆ.text / .cinit / IQmathï¼‰
  *   L3  0x009000~0x009FFF  4096 word  /
  *
- * ÆðÊ¼µØÖ· BEGIN = 0x000000£¬¶ÔÓ¦ boot-to-SARAM Ä£Ê½£¬
- * ÓÃµ÷ÊÔÆ÷Ö±½Ó Load Program ÅÜ£¬²»ÐèÒªÉÕ Flash
+ * èµ·å§‹åœ°å€ BEGIN = 0x000000ï¼Œå¯¹åº” boot-to-SARAM æ¨¡å¼ï¼Œ
+ * ç”¨è°ƒè¯•å™¨ç›´æŽ¥ Load Program è·‘ï¼Œä¸éœ€è¦çƒ§ Flash
  */
 
 MEMORY
@@ -24,7 +24,7 @@ PAGE 0 :
    BEGIN      : origin = 0x000000, length = 0x000002
    RAMM0      : origin = 0x000050, length = 0x0003B0
 
-   // L1+L2+L3 Á¬Ðø 6K word£¬CLA ²»ÓÃÁËÈ«²¿¸ø´úÂë
+   // L1+L2+L3 è¿žç»­ 6K wordï¼ŒCLA ä¸ç”¨äº†å…¨éƒ¨ç»™ä»£ç 
    RAML1L2L3  : origin = 0x008800, length = 0x001800
 
    RESET      : origin = 0x3FFFC0, length = 0x000002
@@ -39,13 +39,13 @@ PAGE 1 :
    BOOT_RSVD  : origin = 0x000002, length = 0x00004E
    RAMM1      : origin = 0x000480, length = 0x000380
 
-   // L0 ×¨ÃÅ¸øÊý¾Ý
+   // L0 ä¸“é—¨ç»™æ•°æ®
    RAML0      : origin = 0x008000, length = 0x000800
 }
 
 SECTIONS
 {
-   // ³ÌÐò
+   // ç¨‹åº
    codestart        : > BEGIN,      PAGE = 0
    ramfuncs         : > RAMM0,      PAGE = 0
    .pinit           : > RAMM0,      PAGE = 0
@@ -57,12 +57,16 @@ SECTIONS
 
    IQmathTables     : > IQTABLES,   PAGE = 0, TYPE = NOLOAD
 
-   // Êý¾Ý
+   // æ•°æ®
    .stack           : > RAMM1,      PAGE = 1
    .esysmem         : > RAMM1,      PAGE = 1
 
    .ebss            : > RAML0,      PAGE = 1
    .econst          : > RAML0,      PAGE = 1
+   // ç¤ºæ³¢å™¨æ•°æ®ç¼“å†²åŒºï¼šå•ç‹¬ä¸€æ®µï¼Œé¿å…æŒ¤å  .ebssï¼ˆè§ main.c çš„ scopeBufsï¼‰
+   scopeBufs        : > RAML1L2L3,  PAGE = 0
+   // ç”µæ„Ÿç”µæµæ•°ç»„å•ç‹¬æ”¾ L0ï¼ˆL1L2L3 å‰©ä½™ç©ºé—´ä¸å¤Ÿç¬¬ 4 ä¸ªæ•°ç»„ï¼‰
+   scopeBufs2       : > RAML0,      PAGE = 1
 
    .reset           : > RESET,      PAGE = 0, TYPE = DSECT
 }

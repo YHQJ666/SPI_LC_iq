@@ -1,22 +1,22 @@
 #ifndef EPWM_H
 #define EPWM_H
 
-#include "DSP28x_Project.h"  // ÒıÈëUint16µÈÀàĞÍ¶¨Òå
+#include "DSP28x_Project.h"  // å¼•å…¥Uint16ç­‰ç±»å‹å®šä¹‰
 
-// 1. GPIO³õÊ¼»¯º¯ÊıÉùÃ÷
+// 1. GPIOåˆå§‹åŒ–å‡½æ•°å£°æ˜
 void InitEPwmGpioAll(void);
 
-// 2. EPWM³õÊ¼»¯º¯ÊıÉùÃ÷
-// Ö÷Ä£¿é£¨EPWM1£©£ºÎŞÏàÎ»Æ«ÒÆ²ÎÊı
+// 2. EPWMåˆå§‹åŒ–å‡½æ•°å£°æ˜
+// ä¸»æ¨¡å—ï¼ˆEPWM1ï¼‰ï¼šæ— ç›¸ä½åç§»å‚æ•°
 void EPWM1_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed);
-// ´ÓÄ£¿é£¨EPWM2~EPWM6£©£º´øÏàÎ»Æ«ÒÆ²ÎÊı
+// ä»æ¨¡å—ï¼ˆEPWM2~EPWM6ï¼‰ï¼šå¸¦ç›¸ä½åç§»å‚æ•°
 void EPWM2_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift);
 void EPWM3_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift);
 void EPWM4_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift);
 void EPWM5_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift);
 void EPWM6_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift);
 
-// 3. Õ¼¿Õ±ÈÉèÖÃº¯ÊıÉùÃ÷£¨AÍ¨µÀ£©
+// 3. å ç©ºæ¯”è®¾ç½®å‡½æ•°å£°æ˜ï¼ˆAé€šé“ï¼‰
 void EPwm1A_SetCompare(Uint16 val);
 void EPwm2A_SetCompare(Uint16 val);
 void EPwm3A_SetCompare(Uint16 val);
@@ -26,36 +26,36 @@ void EPwm6A_SetCompare(Uint16 val);
 
 #endif  // EPWM_H
 
-//Ê¹ÓÃÊµÀı
-//// PWM ²ÎÊı
+//ä½¿ç”¨å®ä¾‹
+//// PWM å‚æ•°
 //Uint16 tbprd  = 500;  // 100kHz
-//Uint16 dbRed  = 10;   // ËÀÇø 200ns
+//Uint16 dbRed  = 10;   // æ­»åŒº 200ns
 //Uint16 dbFed  = 10;
 //
-//// ÏàÎ»Öµ£¨60¡ã ¼ä¸ô£©
-//Uint16 phase2 = 83;   // 60¡ã
-//Uint16 phase3 = 167;  // 120¡ã
-//Uint16 phase4 = 250;  // 180¡ã
-//Uint16 phase5 = 333;  // 240¡ã
-//Uint16 phase6 = 417;  // 300¡ã
+//// ç›¸ä½å€¼ï¼ˆ60Â° é—´éš”ï¼‰
+//Uint16 phase2 = 83;   // 60Â°
+//Uint16 phase3 = 167;  // 120Â°
+//Uint16 phase4 = 250;  // 180Â°
+//Uint16 phase5 = 333;  // 240Â°
+//Uint16 phase6 = 417;  // 300Â°
 //
-//// ³õÊ¼»¯ GPIO
+//// åˆå§‹åŒ– GPIO
 //InitEPwmGpioAll();
 //
-//// ¹Ø TBCLKSYNC
+//// å…³ TBCLKSYNC
 //EALLOW;
 //SysCtrlRegs.PCLKCR0.bit.TBCLKSYNC = 0;
 //EDIS;
 //
-//// ³õÊ¼»¯ EPWM
-//EPWM1_Init(tbprd, dbRed, dbFed);             // Ö÷
-//EPWM2_Init(tbprd, dbRed, dbFed, phase2);     // ´Ó
+//// åˆå§‹åŒ– EPWM
+//EPWM1_Init(tbprd, dbRed, dbFed);             // ä¸»
+//EPWM2_Init(tbprd, dbRed, dbFed, phase2);     // ä»
 //EPWM3_Init(tbprd, dbRed, dbFed, phase3);
 //EPWM4_Init(tbprd, dbRed, dbFed, phase4);
 //EPWM5_Init(tbprd, dbRed, dbFed, phase5);
 //EPWM6_Init(tbprd, dbRed, dbFed, phase6);
 //
-//// Õ¼¿Õ±È 50%
+//// å ç©ºæ¯” 50%
 //EPwm1A_SetCompare(250);
 //EPwm2A_SetCompare(250);
 //EPwm3A_SetCompare(250);
@@ -63,7 +63,7 @@ void EPwm6A_SetCompare(Uint16 val);
 //EPwm5A_SetCompare(250);
 //EPwm6A_SetCompare(250);
 //
-//// ¿ª TBCLKSYNC
+//// å¼€ TBCLKSYNC
 //EALLOW;
 //SysCtrlRegs.PCLKCR0.bit.TBCLKSYNC = 1;
 //EDIS;

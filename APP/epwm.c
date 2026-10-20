@@ -1,57 +1,57 @@
 /*
  * epwm.c
  *
- * ePWM µ×²ã³õÊ¼»¯£ºÊ±»ù¡¢±È½ÏÖµÓ°×Ó¼Ä´æÆ÷¡¢ËÀÇø¡¢GPIO ¸´ÓÃ
+ * ePWM åº•å±‚åˆå§‹åŒ–ï¼šæ—¶åŸºã€æ¯”è¾ƒå€¼å½±å­å¯„å­˜å™¨ã€æ­»åŒºã€GPIO å¤ç”¨
  *
- * ×¢Òâ£ºAQCTLA/AQCTLB µÄÖÐÎÄº¬ÒåÊÇ¶¯×÷ÏÞ¶¨£¬±¾¹¤³Ì×îÖÕµÄ¶¯×÷ÏÞ¶¨ÔÚ
- * spwm.c µÄ SPWM_Init() Àï°´Ë«¼«ÐÔ SPWM ¸²¸Ç£¬ÕâÀï¸øµÄÊÇÍ¨ÓÃÄ¬ÈÏÖµ
+ * æ³¨æ„ï¼šAQCTLA/AQCTLB çš„ä¸­æ–‡å«ä¹‰æ˜¯åŠ¨ä½œé™å®šï¼Œæœ¬å·¥ç¨‹æœ€ç»ˆçš„åŠ¨ä½œé™å®šåœ¨
+ * spwm.c çš„ SPWM_Init() é‡ŒæŒ‰åŒæžæ€§ SPWM è¦†ç›–ï¼Œè¿™é‡Œç»™çš„æ˜¯é€šç”¨é»˜è®¤å€¼
  */
 
 #include "epwm.h"
 
 /*===========================================================================
- * º¯ÊýÃû£ºEPwmDeadBandConfig
- * ËµÃ÷£ºA Í¨µÀ×÷ËÀÇøÊäÈë£¬¸ßµÍ»¥²¹Êä³ö
+ * å‡½æ•°åï¼šEPwmDeadBandConfig
+ * è¯´æ˜Žï¼šA é€šé“ä½œæ­»åŒºè¾“å…¥ï¼Œé«˜ä½Žäº’è¡¥è¾“å‡º
  *===========================================================================*/
 static void EPwmDeadBandConfig(volatile struct EPWM_REGS *epwmRegs, Uint16 dbRed, Uint16 dbFed)
 {
-    epwmRegs->DBCTL.bit.IN_MODE  = 0;   // A Í¨µÀ×÷ÎªËÀÇøÊäÈë
-    epwmRegs->DBCTL.bit.POLSEL   = 2;   // ¸ßµÍ»¥²¹
-    epwmRegs->DBCTL.bit.OUT_MODE = 3;   // Ê¹ÄÜËÀÇø
+    epwmRegs->DBCTL.bit.IN_MODE  = 0;   // A é€šé“ä½œä¸ºæ­»åŒºè¾“å…¥
+    epwmRegs->DBCTL.bit.POLSEL   = 2;   // é«˜ä½Žäº’è¡¥
+    epwmRegs->DBCTL.bit.OUT_MODE = 3;   // ä½¿èƒ½æ­»åŒº
     epwmRegs->DBRED = dbRed;
     epwmRegs->DBFED = dbFed;
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºEPWM1_Init
- * ËµÃ÷£ºÖ÷Ä£¿é³õÊ¼»¯£¬SYNCOSEL ÔÚ CTR=Zero ·¢Í¬²½Âö³å
+ * å‡½æ•°åï¼šEPWM1_Init
+ * è¯´æ˜Žï¼šä¸»æ¨¡å—åˆå§‹åŒ–ï¼ŒSYNCOSEL åœ¨ CTR=Zero å‘åŒæ­¥è„‰å†²
  *===========================================================================*/
 void EPWM1_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed)
 {
     SysCtrlRegs.PCLKCR1.bit.EPWM1ENCLK = 1;
 
-    EPwm1Regs.TBCTL.bit.SYNCOSEL   = 1;     // CTR=Zero ·¢Í¬²½Âö³å
-    EPwm1Regs.TBCTL.bit.PHSEN      = 0;     // Ö÷Ä£¿é
+    EPwm1Regs.TBCTL.bit.SYNCOSEL   = 1;     // CTR=Zero å‘åŒæ­¥è„‰å†²
+    EPwm1Regs.TBCTL.bit.PHSEN      = 0;     // ä¸»æ¨¡å—
     EPwm1Regs.TBPHS.half.TBPHS     = 0;
     EPwm1Regs.TBCTR                = 0;
     EPwm1Regs.TBPRD                = tbprd;
-    EPwm1Regs.TBCTL.bit.CTRMODE    = 2;     // ÉÏÏÂ¼ÆÊý
+    EPwm1Regs.TBCTL.bit.CTRMODE    = 2;     // ä¸Šä¸‹è®¡æ•°
     EPwm1Regs.TBCTL.bit.HSPCLKDIV  = 0;
     EPwm1Regs.TBCTL.bit.CLKDIV     = 0;
 
-    // ±È½ÏÖµÓ°×Ó¼Ä´æÆ÷£¬CTR=ZERO ×°ÔØ
+    // æ¯”è¾ƒå€¼å½±å­å¯„å­˜å™¨ï¼ŒCTR=ZERO è£…è½½
     EPwm1Regs.CMPCTL.bit.SHDWAMODE = 0;
     EPwm1Regs.CMPCTL.bit.LOADAMODE = 0;
     EPwm1Regs.CMPA.half.CMPA       = 0;
     EPwm1Regs.CMPB                 = 0;
 
-    // ---- AQCTLA£ºd = CMPA / TBPRD ----
-    EPwm1Regs.AQCTLA.bit.ZRO = 0;   // ²»¶¯
-    EPwm1Regs.AQCTLA.bit.PRD = 0;   // ²»¶¯
-    EPwm1Regs.AQCTLA.bit.CAU = 1;   // CMPA ÏòÉÏ ¡ú CLEAR
-    EPwm1Regs.AQCTLA.bit.CAD = 2;   // CMPA ÏòÏÂ ¡ú SET
+    // ---- AQCTLAï¼šd = CMPA / TBPRD ----
+    EPwm1Regs.AQCTLA.bit.ZRO = 0;   // ä¸åŠ¨
+    EPwm1Regs.AQCTLA.bit.PRD = 0;   // ä¸åŠ¨
+    EPwm1Regs.AQCTLA.bit.CAU = 1;   // CMPA å‘ä¸Š â†’ CLEAR
+    EPwm1Regs.AQCTLA.bit.CAD = 2;   // CMPA å‘ä¸‹ â†’ SET
 
-    // ---- AQCTLB£º±ØÐëÈ« 0£¬EPWMxB ½»¸øËÀÇøÄ£¿éÈ¡·´ ----
+    // ---- AQCTLBï¼šå¿…é¡»å…¨ 0ï¼ŒEPWMxB äº¤ç»™æ­»åŒºæ¨¡å—å–å ----
     EPwm1Regs.AQCTLB.bit.ZRO = 0;
     EPwm1Regs.AQCTLB.bit.PRD = 0;
     EPwm1Regs.AQCTLB.bit.CAU = 0;
@@ -62,9 +62,9 @@ void EPWM1_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed)
     EPwmDeadBandConfig(&EPwm1Regs, dbRed, dbFed);
 }
 
-// ´ÓÄ£¿é£¨Ö±½ÓÓÉ EPWM1 Í¬²½£©
-// ×¢Òâ£ººêÌåÀï²»ÄÜÐ´ // ×¢ÊÍ£¬ÐøÐÐ·û»á°ÑÏÂÒ»ÐÐÒ²²¢½øÀ´Ò»Æð×¢ÊÍµô£¬
-// ËùÒÔËµÃ÷Ð´ÔÚÕâÀï£ºSYNCOSEL=0 ÓÃÍ¬²½ÊäÈë£¬PHSEN=1 ÆôÓÃÏàÎ»¼ÓÔØ£¬CTRMODE=2 ÉÏÏÂ¼ÆÊý
+// ä»Žæ¨¡å—ï¼ˆç›´æŽ¥ç”± EPWM1 åŒæ­¥ï¼‰
+// æ³¨æ„ï¼šå®ä½“é‡Œä¸èƒ½å†™ // æ³¨é‡Šï¼Œç»­è¡Œç¬¦ä¼šæŠŠä¸‹ä¸€è¡Œä¹Ÿå¹¶è¿›æ¥ä¸€èµ·æ³¨é‡ŠæŽ‰ï¼Œ
+// æ‰€ä»¥è¯´æ˜Žå†™åœ¨è¿™é‡Œï¼šSYNCOSEL=0 ç”¨åŒæ­¥è¾“å…¥ï¼ŒPHSEN=1 å¯ç”¨ç›¸ä½åŠ è½½ï¼ŒCTRMODE=2 ä¸Šä¸‹è®¡æ•°
 #define DEFINE_EPWM_SLAVE_INIT(module) \
 void EPWM##module##_Init(Uint16 tbprd, Uint16 dbRed, Uint16 dbFed, Uint16 phaseShift) \
 { \
@@ -98,7 +98,7 @@ DEFINE_EPWM_SLAVE_INIT(4)
 DEFINE_EPWM_SLAVE_INIT(5)
 DEFINE_EPWM_SLAVE_INIT(6)
 
-// ±È½ÏÖµÉèÖÃ
+// æ¯”è¾ƒå€¼è®¾ç½®
 void EPwm1A_SetCompare(Uint16 val) { EPwm1Regs.CMPA.half.CMPA = val; }
 void EPwm2A_SetCompare(Uint16 val) { EPwm2Regs.CMPA.half.CMPA = val; }
 void EPwm3A_SetCompare(Uint16 val) { EPwm3Regs.CMPA.half.CMPA = val; }
@@ -107,9 +107,9 @@ void EPwm5A_SetCompare(Uint16 val) { EPwm5Regs.CMPA.half.CMPA = val; }
 void EPwm6A_SetCompare(Uint16 val) { EPwm6Regs.CMPA.half.CMPA = val; }
 
 /*===========================================================================
- * º¯ÊýÃû£ºInitPwmBridgeGpio
- * ËµÃ÷£ºÖ»°Ñ GPIO0~GPIO3 ¸´ÓÃÎª EPWM1A/1B¡¢EPWM2A/2B
- *       GPIO4 ¼°ÒÔÉÏ²»ÔÙÕ¼ÓÃ£¬Áô¸øÖÐ¶Ï¼ÆÊ±½ÅºÍÆäËûÓÃÍ¾
+ * å‡½æ•°åï¼šInitPwmBridgeGpio
+ * è¯´æ˜Žï¼šåªæŠŠ GPIO0~GPIO3 å¤ç”¨ä¸º EPWM1A/1Bã€EPWM2A/2B
+ *       GPIO4 åŠä»¥ä¸Šä¸å†å ç”¨ï¼Œç•™ç»™ä¸­æ–­è®¡æ—¶è„šå’Œå…¶ä»–ç”¨é€”
  *===========================================================================*/
 void InitPwmBridgeGpio(void)
 {

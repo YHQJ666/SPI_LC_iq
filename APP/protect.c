@@ -1,20 +1,20 @@
 /*
  * protect.c
  *
- * ¹ýÁ÷±£»¤ÊµÏÖ£ºCOMP1/COMP2 + ePWM Digital Compare + Trip Zone
+ * è¿‡æµä¿æŠ¤å®žçŽ°ï¼šCOMP1/COMP2 + ePWM Digital Compare + Trip Zone
  *
- * Éè¼ÆÒªµã£º
- *   1) ËÄ¹ÜÈ«¹ØÊÇ TZCTL Ö±½Ó°Ñ EPWMxA / EPWMxB À­µÍ£¬Óë CMPA ÎÞ¹Ø£¬
- *      ËùÒÔ¿ØÖÆ»·»¹ÔÚËãÒ²À¹²»×¡±£»¤¶¯×÷
- *   2) DCxEVT1 -> µ¥´Î´¥·¢(OST)£¬Ëø´æ£¬±ØÐëÈí¼þÇå TZCLR ²ÅÄÜ»Ö¸´
- *      DCxEVT2 -> ÖðÖÜÆÚ(CBC)£¬×÷Îª·´Ïò¹ýÁ÷µÄ¼´Ê±ÏÞÁ÷
- *   3) TZEINT Ö»ÔÚ EPWM1 ÉÏ¿ªÖÐ¶Ï£¬ÓÃÒ»Â· ISR ÉÏ±¨¼´¿É
- *      £¨Á½¸öÄ£¿éÓÉÍ¬Ò»¶Ô±È½ÏÆ÷Çý¶¯£¬±ØÈ»Í¬Ê±¶¯×÷£©
- *   4) COMP1A ¹Ì¶¨ÔÚ ADCINA2£¬±¾¹¤³Ì ADCINA2 = µç¸ÐµçÁ÷£¬
- *      ËùÒÔãÐÖµ°´µç¸ÐµçÁ÷´«¸ÐÆ÷µÄÁ¿³Ì»»Ëã
+ * è®¾è®¡è¦ç‚¹ï¼š
+ *   1) å››ç®¡å…¨å…³æ˜¯ TZCTL ç›´æŽ¥æŠŠ EPWMxA / EPWMxB æ‹‰ä½Žï¼Œä¸Ž CMPA æ— å…³ï¼Œ
+ *      æ‰€ä»¥æŽ§åˆ¶çŽ¯è¿˜åœ¨ç®—ä¹Ÿæ‹¦ä¸ä½ä¿æŠ¤åŠ¨ä½œ
+ *   2) DCxEVT1 -> å•æ¬¡è§¦å‘(OST)ï¼Œé”å­˜ï¼Œå¿…é¡»è½¯ä»¶æ¸… TZCLR æ‰èƒ½æ¢å¤
+ *      DCxEVT2 -> é€å‘¨æœŸ(CBC)ï¼Œä½œä¸ºåå‘è¿‡æµçš„å³æ—¶é™æµ
+ *   3) TZEINT åªåœ¨ EPWM1 ä¸Šå¼€ä¸­æ–­ï¼Œç”¨ä¸€è·¯ ISR ä¸ŠæŠ¥å³å¯
+ *      ï¼ˆä¸¤ä¸ªæ¨¡å—ç”±åŒä¸€å¯¹æ¯”è¾ƒå™¨é©±åŠ¨ï¼Œå¿…ç„¶åŒæ—¶åŠ¨ä½œï¼‰
+ *   4) COMP1A å›ºå®šåœ¨ ADCINA2ï¼Œæœ¬å·¥ç¨‹ ADCINA2 = ç”µæ„Ÿç”µæµï¼Œ
+ *      æ‰€ä»¥é˜ˆå€¼æŒ‰ç”µæ„Ÿç”µæµä¼ æ„Ÿå™¨çš„é‡ç¨‹æ¢ç®—
  *
- * ¶¨µã»¯£ºãÐÖµ»»ËãÈ«¹ý³Ì Q24£¬Ö»ÓÐ×îºó³Ë 1024 ×ª DAC ÂëÊ±ÓÃÒÆÎ»£¬
- *         ÒòÎª 1024 ³¬¹ý Q24 ÄÜ±íÊ¾µÄ ¡À128
+ * å®šç‚¹åŒ–ï¼šé˜ˆå€¼æ¢ç®—å…¨è¿‡ç¨‹ Q24ï¼Œåªæœ‰æœ€åŽä¹˜ 1024 è½¬ DAC ç æ—¶ç”¨ç§»ä½ï¼Œ
+ *         å› ä¸º 1024 è¶…è¿‡ Q24 èƒ½è¡¨ç¤ºçš„ Â±128
  */
 
 #include "protect.h"
@@ -23,27 +23,27 @@
 volatile Uint16 Protect_TripFlag   = 0U;
 volatile Uint16 Protect_TripSource = 0U;
 
-// COMP ±È½ÏÆ÷ DAC£º²Î¿¼µçÑ¹ 3.3V¡¢10 Î»£¬ÂëÖµ = Vpin/3.3*1024
+// COMP æ¯”è¾ƒå™¨ DACï¼šå‚è€ƒç”µåŽ‹ 3.3Vã€10 ä½ï¼Œç å€¼ = Vpin/3.3*1024
 #define DAC_Full_Scale_F    3.3f
 #define DAC_Max_Code        1023U
-// µç¸ÐµçÁ÷µ÷Àí£¨ºÍ ADCINA2 Í¬Ò»Â·£©£ºVpin = 2.5 + 1m¦¸*20*I = 2.5 + 0.02*I
-#define Sense_Offset_F      2.5f       // Ë«ÏòµçÁ÷²ÉÑùÁãµã V
-#define Sense_Gain_F        0.02f      // 1m¦¸ * 20 = 0.02 V/A
+// ç”µæ„Ÿç”µæµè°ƒç†ï¼ˆå’Œ ADCINA2 åŒä¸€è·¯ï¼‰ï¼šVpin = 2.5 + 1mÎ©*20*I = 2.5 + 0.02*I
+#define Sense_Offset_F      2.5f       // åŒå‘ç”µæµé‡‡æ ·é›¶ç‚¹ V
+#define Sense_Gain_F        0.02f      // 1mÎ© * 20 = 0.02 V/A
 
 #define DAC_Full_Scale      _IQ(DAC_Full_Scale_F)
 #define Sense_Offset        _IQ(Sense_Offset_F)
 #define Sense_Gain          _IQ(Sense_Gain_F)
 
-// Q24 ±ÈÀý -> 10 Î» DAC Âë£º³Ë 1024 = ×óÒÆ 10 Î»£¬·´¹ýÀ´¾ÍÊÇÓÒÒÆ 24-10 = 14 Î»¡£
-// Ð´³ÉÒÆÎ»¶ø²»ÊÇ _IQmpy£¬ÊÇÒòÎª 1024 ³¬³ö Q24 µÄ¶¯Ì¬·¶Î§£¨¡À128£©£¬²»ÄÜÔÙµ± Q24 ÊýÓÃ
+// Q24 æ¯”ä¾‹ -> 10 ä½ DAC ç ï¼šä¹˜ 1024 = å·¦ç§» 10 ä½ï¼Œåè¿‡æ¥å°±æ˜¯å³ç§» 24-10 = 14 ä½ã€‚
+// å†™æˆç§»ä½è€Œä¸æ˜¯ _IQmpyï¼Œæ˜¯å› ä¸º 1024 è¶…å‡º Q24 çš„åŠ¨æ€èŒƒå›´ï¼ˆÂ±128ï¼‰ï¼Œä¸èƒ½å†å½“ Q24 æ•°ç”¨
 #define Ratio_To_Code(r)    ((long)((r) >> 14))
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_AmpsToDacCode
- * ËµÃ÷£º°Ñµç¸ÐµçÁ÷°²ÅàÖµ»»Ëã³É COMP DAC Âë
+ * å‡½æ•°åï¼šProtect_AmpsToDacCode
+ * è¯´æ˜Žï¼šæŠŠç”µæ„Ÿç”µæµå®‰åŸ¹å€¼æ¢ç®—æˆ COMP DAC ç 
  *       Vpin(I) = 2.5 + 0.02*I
  *       code    = Vpin / 3.3 * 1024
- *       amps Îª Q24£¬³ËÔöÒæ¼ÓÁãµã¼´¿É£¬²»ÐèÒª³ý·¨
+ *       amps ä¸º Q24ï¼Œä¹˜å¢žç›ŠåŠ é›¶ç‚¹å³å¯ï¼Œä¸éœ€è¦é™¤æ³•
  *===========================================================================*/
 static Uint16 Protect_AmpsToDacCode(_iq amps)
 {
@@ -74,14 +74,14 @@ static Uint16 Protect_AmpsToDacCode(_iq amps)
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_ConfigEpwmTrip
- * ËµÃ÷£º¸øÒ»¸ö ePWM Ä£¿é¹ÒÉÏÊý×Ö±È½Ï¼Ó´¥·¢Çø
- *       ÕýÏò¹ýÁ÷: COMP1OUT -> DCAH/DCBH -> DCAEVT1/DCBEVT1 µ¥´Î
- *       ·´Ïò¹ýÁ÷: COMP2OUT -> DCAL/DCBL -> DCAEVT2/DCBEVT2 ÖðÖÜÆÚ
+ * å‡½æ•°åï¼šProtect_ConfigEpwmTrip
+ * è¯´æ˜Žï¼šç»™ä¸€ä¸ª ePWM æ¨¡å—æŒ‚ä¸Šæ•°å­—æ¯”è¾ƒåŠ è§¦å‘åŒº
+ *       æ­£å‘è¿‡æµ: COMP1OUT -> DCAH/DCBH -> DCAEVT1/DCBEVT1 å•æ¬¡
+ *       åå‘è¿‡æµ: COMP2OUT -> DCAL/DCBL -> DCAEVT2/DCBEVT2 é€å‘¨æœŸ
  *===========================================================================*/
 static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
 {
-    // Êý×Ö±È½ÏÊäÈëÑ¡Ôñ
+    // æ•°å­—æ¯”è¾ƒè¾“å…¥é€‰æ‹©
     epwm->DCTRIPSEL.bit.DCAHCOMPSEL = DC_COMP1OUT;
     epwm->DCTRIPSEL.bit.DCBHCOMPSEL = DC_COMP1OUT;
 #if (Use_Comp2_Negative == 1)
@@ -92,16 +92,16 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
     epwm->DCTRIPSEL.bit.DCBLCOMPSEL = DC_TZ2;
 #endif
 
-    // DCAEVT1 / DCBEVT1£ºCOMP1 Êä³ö¸ß = ÕýÏò¹ýÁ÷
+    // DCAEVT1 / DCBEVT1ï¼šCOMP1 è¾“å‡ºé«˜ = æ­£å‘è¿‡æµ
     epwm->TZDCSEL.bit.DCAEVT1 = TZ_DCAH_HI;
-    epwm->DCACTL.bit.EVT1SRCSEL     = DC_EVT1;          // ²»¾­¹ýÂË²¨
-    epwm->DCACTL.bit.EVT1FRCSYNCSEL = DC_EVT_ASYNC;     // Òì²½Í¨µÀ£¬ÏìÓ¦×î¿ì
+    epwm->DCACTL.bit.EVT1SRCSEL     = DC_EVT1;          // ä¸ç»è¿‡æ»¤æ³¢
+    epwm->DCACTL.bit.EVT1FRCSYNCSEL = DC_EVT_ASYNC;     // å¼‚æ­¥é€šé“ï¼Œå“åº”æœ€å¿«
 
     epwm->TZDCSEL.bit.DCBEVT1 = TZ_DCBH_HI;
     epwm->DCBCTL.bit.EVT1SRCSEL     = DC_EVT1;
     epwm->DCBCTL.bit.EVT1FRCSYNCSEL = DC_EVT_ASYNC;
 
-    // DCAEVT2 / DCBEVT2£ºCOMP2 Êä³ö¸ß = ·´Ïò¹ýÁ÷
+    // DCAEVT2 / DCBEVT2ï¼šCOMP2 è¾“å‡ºé«˜ = åå‘è¿‡æµ
 #if (Use_Comp2_Negative == 1)
     epwm->TZDCSEL.bit.DCAEVT2 = TZ_DCAL_HI;
     epwm->TZDCSEL.bit.DCBEVT2 = TZ_DCBL_HI;
@@ -114,46 +114,46 @@ static void Protect_ConfigEpwmTrip(volatile struct EPWM_REGS *epwm)
     epwm->DCBCTL.bit.EVT2SRCSEL     = DC_EVT2;
     epwm->DCBCTL.bit.EVT2FRCSYNCSEL = DC_EVT_ASYNC;
 
-    // Ñ¡Îª´¥·¢Ô´
-    epwm->TZSEL.bit.DCAEVT1 = 1U;       // µ¥´Î(Ëø´æ)
+    // é€‰ä¸ºè§¦å‘æº
+    epwm->TZSEL.bit.DCAEVT1 = 1U;       // å•æ¬¡(é”å­˜)
     epwm->TZSEL.bit.DCBEVT1 = 1U;
 #if (Use_Comp2_Negative == 1)
-    epwm->TZSEL.bit.DCAEVT2 = 1U;       // ÖðÖÜÆÚ(ÏÞÁ÷)
+    epwm->TZSEL.bit.DCAEVT2 = 1U;       // é€å‘¨æœŸ(é™æµ)
     epwm->TZSEL.bit.DCBEVT2 = 1U;
 #else
     epwm->TZSEL.bit.DCAEVT2 = 0U;
     epwm->TZSEL.bit.DCBEVT2 = 0U;
 #endif
 
-    // ¶¯×÷£ºËÄ¹ÜÈ«¹Ø£¨A/B ¶¼Ö±½ÓÀ­µÍ£©
+    // åŠ¨ä½œï¼šå››ç®¡å…¨å…³ï¼ˆA/B éƒ½ç›´æŽ¥æ‹‰ä½Žï¼‰
     epwm->TZCTL.bit.DCAEVT1 = TZ_FORCE_LO;
     epwm->TZCTL.bit.DCAEVT2 = TZ_FORCE_LO;
     epwm->TZCTL.bit.DCBEVT1 = TZ_FORCE_LO;
     epwm->TZCTL.bit.DCBEVT2 = TZ_FORCE_LO;
 
-    // Çå±êÖ¾£¨TZFLG Ö»¶Á£¬ÓÃ TZCLR Çå£©
+    // æ¸…æ ‡å¿—ï¼ˆTZFLG åªè¯»ï¼Œç”¨ TZCLR æ¸…ï¼‰
     epwm->TZCLR.all = 0xFFFFU;
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_InitOCP
- * ËµÃ÷£º³õÊ¼»¯¹ýÁ÷±£»¤¡£ÏÈÉÏ ADC bandgap£¨±È½ÏÆ÷¹²ÓÃ£©£¬ÔÙÅä COMP1/COMP2£¬
- *       ×îºó¸ø EPWM1/EPWM2 ¹Ò´¥·¢Á´
- *       Protect_Enable = 0 Ê±Ö±½Ó·µ»Ø£¬ËùÓÐÏà¹Ø¼Ä´æÆ÷±£³Ö¸´Î»Öµ
+ * å‡½æ•°åï¼šProtect_InitOCP
+ * è¯´æ˜Žï¼šåˆå§‹åŒ–è¿‡æµä¿æŠ¤ã€‚å…ˆä¸Š ADC bandgapï¼ˆæ¯”è¾ƒå™¨å…±ç”¨ï¼‰ï¼Œå†é… COMP1/COMP2ï¼Œ
+ *       æœ€åŽç»™ EPWM1/EPWM2 æŒ‚è§¦å‘é“¾
+ *       Protect_Enable = 0 æ—¶ç›´æŽ¥è¿”å›žï¼Œæ‰€æœ‰ç›¸å…³å¯„å­˜å™¨ä¿æŒå¤ä½å€¼
  *===========================================================================*/
 void Protect_InitOCP(void)
 {
 #if (Protect_Enable == 0)
-    // ±£»¤¹ØµôÊ±Ê²Ã´¶¼²»×ö
-    // ¹Ø¼ü£ºCOMP¡¢Digital Compare¡¢Trip Zone È«²¿²»ÅäÖÃ£¬
-    // ÕâÑù¼´Ê¹±È½ÏÆ÷ÊäÈëÐü¿ÕÒ²²»»áÎó´¥·¢ TZ °ÑËÄ¹Ü·âËÀ
+    // ä¿æŠ¤å…³æŽ‰æ—¶ä»€ä¹ˆéƒ½ä¸åš
+    // å…³é”®ï¼šCOMPã€Digital Compareã€Trip Zone å…¨éƒ¨ä¸é…ç½®ï¼Œ
+    // è¿™æ ·å³ä½¿æ¯”è¾ƒå™¨è¾“å…¥æ‚¬ç©ºä¹Ÿä¸ä¼šè¯¯è§¦å‘ TZ æŠŠå››ç®¡å°æ­»
     Protect_TripFlag   = 0U;
     Protect_TripSource = 0U;
     return;
 #else
     Uint16 code;
 
-    // ±È½ÏÆ÷ÐèÒª ADC µÄ bandgap ×ö²Î¿¼£¬±ØÐëÏÈÉÏµç²¢µÈÎÈ¶¨
+    // æ¯”è¾ƒå™¨éœ€è¦ ADC çš„ bandgap åšå‚è€ƒï¼Œå¿…é¡»å…ˆä¸Šç”µå¹¶ç­‰ç¨³å®š
     EALLOW;
     SysCtrlRegs.PCLKCR0.bit.ADCENCLK   = 1;
     SysCtrlRegs.PCLKCR3.bit.COMP1ENCLK = 1;
@@ -167,19 +167,19 @@ void Protect_InitOCP(void)
 
     code = Protect_AmpsToDacCode(Trip_Amps_Default);
 
-    // COMP1£ºÕýÏò¹ýÁ÷¡£COMPSOURCE=0 ÓÃÄÚ²¿ DAC ×ö·´ÏàÊäÈë£¬CMPINV=0 ²»·´Ïà
-    // ¼´ COMP1A(µç¸ÐµçÁ÷) > DAC ãÐÖµ Ê±Êä³ö¸ß
+    // COMP1ï¼šæ­£å‘è¿‡æµã€‚COMPSOURCE=0 ç”¨å†…éƒ¨ DAC åšåç›¸è¾“å…¥ï¼ŒCMPINV=0 ä¸åç›¸
+    // å³ COMP1A(ç”µæ„Ÿç”µæµ) > DAC é˜ˆå€¼ æ—¶è¾“å‡ºé«˜
     EALLOW;
     Comp1Regs.COMPCTL.bit.COMPDACEN  = 1;
     Comp1Regs.COMPCTL.bit.COMPSOURCE = 0;
     Comp1Regs.COMPCTL.bit.CMPINV     = 0;
-    Comp1Regs.COMPCTL.bit.QUALSEL    = 0;       // ²»×öÏÞ·ùÂË²¨£¬×î¿ìÏìÓ¦
-    Comp1Regs.COMPCTL.bit.SYNCSEL    = 0;       // Òì²½Êä³ö
+    Comp1Regs.COMPCTL.bit.QUALSEL    = 0;       // ä¸åšé™å¹…æ»¤æ³¢ï¼Œæœ€å¿«å“åº”
+    Comp1Regs.COMPCTL.bit.SYNCSEL    = 0;       // å¼‚æ­¥è¾“å‡º
     Comp1Regs.DACVAL.bit.DACVAL      = code;
     EDIS;
 
 #if (Use_Comp2_Negative == 1)
-    // COMP2£º·´Ïò¹ýÁ÷£¬Êä³ö·´Ïà£¬µç¸ÐµçÁ÷ < -ãÐÖµ Ê±Êä³ö¸ß
+    // COMP2ï¼šåå‘è¿‡æµï¼Œè¾“å‡ºåç›¸ï¼Œç”µæ„Ÿç”µæµ < -é˜ˆå€¼ æ—¶è¾“å‡ºé«˜
     EALLOW;
     Comp2Regs.COMPCTL.bit.COMPDACEN  = 1;
     Comp2Regs.COMPCTL.bit.COMPSOURCE = 0;
@@ -190,13 +190,13 @@ void Protect_InitOCP(void)
     EDIS;
 #endif
 
-    // Á½¸ö ePWM Ä£¿é¶¼¹ÒÉÏ´¥·¢Á´£¬ÖÐ¶ÏÖ»¿ª EPWM1 Ò»Â·ÓÃÀ´ÉÏ±¨
+    // ä¸¤ä¸ª ePWM æ¨¡å—éƒ½æŒ‚ä¸Šè§¦å‘é“¾ï¼Œä¸­æ–­åªå¼€ EPWM1 ä¸€è·¯ç”¨æ¥ä¸ŠæŠ¥
     EALLOW;
     Protect_ConfigEpwmTrip(&EPwm1Regs);
     Protect_ConfigEpwmTrip(&EPwm2Regs);
 
-    EPwm1Regs.TZEINT.bit.OST = 1;       // DCxEVT1 µ¥´Î
-    EPwm1Regs.TZEINT.bit.CBC = 1;       // DCxEVT2 ÖðÖÜÆÚ
+    EPwm1Regs.TZEINT.bit.OST = 1;       // DCxEVT1 å•æ¬¡
+    EPwm1Regs.TZEINT.bit.CBC = 1;       // DCxEVT2 é€å‘¨æœŸ
     EDIS;
 
     Protect_TripFlag   = 0U;
@@ -205,19 +205,19 @@ void Protect_InitOCP(void)
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_SetTripLevel
- * ËµÃ÷£º¸Ä¹ýÁ÷ãÐÖµ£¬µ¥Î» A£¬Ë«Ïò¶Ô³Æ£¨Q24£©
+ * å‡½æ•°åï¼šProtect_SetTripLevel
+ * è¯´æ˜Žï¼šæ”¹è¿‡æµé˜ˆå€¼ï¼Œå•ä½ Aï¼ŒåŒå‘å¯¹ç§°ï¼ˆQ24ï¼‰
  *===========================================================================*/
 void Protect_SetTripLevel(_iq amps)
 {
 #if (Protect_Enable == 0)
-    // ±£»¤¹Ø±Õ£¬²»Åö±È½ÏÆ÷
+    // ä¿æŠ¤å…³é—­ï¼Œä¸ç¢°æ¯”è¾ƒå™¨
     (void)amps;
     return;
 #else
     Uint16 code;
 
-    if (amps < 0)               // ¶¨µãÈ¡¾ø¶ÔÖµ¾ÍÊÇÕûÊýÈ¡·´
+    if (amps < 0)               // å®šç‚¹å–ç»å¯¹å€¼å°±æ˜¯æ•´æ•°å–å
     {
         amps = -amps;
     }
@@ -233,14 +233,14 @@ void Protect_SetTripLevel(_iq amps)
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_ClearTrip
- * ËµÃ÷£ºÇå´¥·¢Ëø´æ²¢ÖØÐÂ´ò¿ª TZ ÖÐ¶ÏÔ´
- *       Trip ISR Àï»áÖ÷¶¯¹Øµô TZEINT ÒÔ·ÀÖ¹ÖÐ¶Ï·ç±©£¬»Ö¸´Êä³öÊ±±ØÐëÖØÐÂ´ò¿ª
+ * å‡½æ•°åï¼šProtect_ClearTrip
+ * è¯´æ˜Žï¼šæ¸…è§¦å‘é”å­˜å¹¶é‡æ–°æ‰“å¼€ TZ ä¸­æ–­æº
+ *       Trip ISR é‡Œä¼šä¸»åŠ¨å…³æŽ‰ TZEINT ä»¥é˜²æ­¢ä¸­æ–­é£Žæš´ï¼Œæ¢å¤è¾“å‡ºæ—¶å¿…é¡»é‡æ–°æ‰“å¼€
  *===========================================================================*/
 void Protect_ClearTrip(void)
 {
 #if (Protect_Enable == 0)
-    // ±£»¤¹Ø±Õ£¬TZ ´ÓÀ´Ã»±»ÅäÖÃ¹ý£¬Ã»ÓÐËø´æÒªÇå
+    // ä¿æŠ¤å…³é—­ï¼ŒTZ ä»Žæ¥æ²¡è¢«é…ç½®è¿‡ï¼Œæ²¡æœ‰é”å­˜è¦æ¸…
     Protect_TripFlag   = 0U;
     Protect_TripSource = 0U;
     return;
@@ -261,7 +261,7 @@ void Protect_ClearTrip(void)
     EPwm2Regs.TZCLR.bit.DCBEVT1 = 1;
     EPwm2Regs.TZCLR.bit.DCBEVT2 = 1;
 
-    // ÖØÐÂÎä×°ÖÐ¶ÏÔ´
+    // é‡æ–°æ­¦è£…ä¸­æ–­æº
     EPwm1Regs.TZEINT.bit.OST = 1;
     EPwm1Regs.TZEINT.bit.CBC = 1;
     EDIS;
@@ -272,10 +272,10 @@ void Protect_ClearTrip(void)
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_ForceStop
- * ËµÃ÷£ºÈí¼þ¼±Í££¬ËÄ¹ÜÈ«¹Ø¡£ÖÃ TZFRC.OST ºóÁ¢¿ÌÇå INT ±êÖ¾£¬
- *       ËùÒÔ²»»á²úÉú TZ ÖÐ¶Ï£¬Ò²²»ÎÛÈ¾ Protect_TripFlag
- *       Protect_Enable = 0 Ê±ÊÇ¿Õ²Ù×÷£¬·ñÔòÒ»µ÷ÓÃ¾Í°ÑÊä³ö·âËÀÁË
+ * å‡½æ•°åï¼šProtect_ForceStop
+ * è¯´æ˜Žï¼šè½¯ä»¶æ€¥åœï¼Œå››ç®¡å…¨å…³ã€‚ç½® TZFRC.OST åŽç«‹åˆ»æ¸… INT æ ‡å¿—ï¼Œ
+ *       æ‰€ä»¥ä¸ä¼šäº§ç”Ÿ TZ ä¸­æ–­ï¼Œä¹Ÿä¸æ±¡æŸ“ Protect_TripFlag
+ *       Protect_Enable = 0 æ—¶æ˜¯ç©ºæ“ä½œï¼Œå¦åˆ™ä¸€è°ƒç”¨å°±æŠŠè¾“å‡ºå°æ­»äº†
  *===========================================================================*/
 void Protect_ForceStop(void)
 {
@@ -292,8 +292,8 @@ void Protect_ForceStop(void)
 }
 
 /*===========================================================================
- * º¯ÊýÃû£ºProtect_SoftwareCheck
- * ËµÃ÷£ºÈí¼þ¹ýÁ÷¶µµ×£¬·µ»Ø 1 ±íÊ¾Ô½ÏÞ£¨Q24£¬ÕûÊý±È½Ï£©
+ * å‡½æ•°åï¼šProtect_SoftwareCheck
+ * è¯´æ˜Žï¼šè½¯ä»¶è¿‡æµå…œåº•ï¼Œè¿”å›ž 1 è¡¨ç¤ºè¶Šé™ï¼ˆQ24ï¼Œæ•´æ•°æ¯”è¾ƒï¼‰
  *===========================================================================*/
 Uint16 Protect_SoftwareCheck(_iq i_fb, _iq i_limit)
 {
