@@ -180,7 +180,7 @@
 // ---- 5.2 输出电压 v_o（ADCA0）----
 // 偏置 1.5V + 分压。Vpin = 1.5 + K*V，改 K 就改了量程
 #define ADC_Vout_Vzero      1.5f
-#define ADC_Vout_K          0.027f    //
+#define ADC_Vout_K          0.026f    //
 
 // ---- 5.3 电感电流 i_L（ADCA2）----
 // 和输出电流调理一样：1mΩ + 20 倍
@@ -335,8 +335,8 @@
 #define R_V             _IQ(W0_V_F * Ts_S * 0.5f)
 #define Q_V             _IQ(Wc_V_F * Ts_S * 0.5f)
 
-#define KP_V            _IQ(0.0585f)    // 电压环比例
-#define KR_V            _IQ(0.1651f)    // 电压环谐振增益
+#define KP_V            _IQ(0.012543f)    // 电压环比例
+#define KR_V            _IQ(0.032475f)    // 电压环谐振增益
 #define KP_I            _IQ(0.8411f)    // 电流环 Kp [mod/A]
 
 // 电流环 Ki，单位 1/s，0 = 纯 P

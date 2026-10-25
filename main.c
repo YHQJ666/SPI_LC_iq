@@ -171,12 +171,14 @@ volatile Uint16 RmsCommit = 0U;
 // 用 float：Graph 里 Data Type 直接选 "32 bit floating point"、Q_Value=0，
 // 不用配 Q 格式，最不容易出错（int16+Q8 在 CCS 的 Graph 里显示不正常）。
 //===========================================================================
-#define Scope_Size      200U    // 每通道点数（float 占 2 字，200 点 = 400 字/通道）
+// 每通道 160 点（float 占 2 字 -> 320 字/通道，4 通道共 1280 字）。
+// 4 个数组固定在链接器 SCOPEBUF 段的 0x9B00 起，代码长度变化不会挪动它们，
+// 所以 CCS Graph 里存的地址不会失效。
+#define Scope_Size      160U
 
 // RMS 一阶 IIR 平滑系数 1/2^Rms_SmoothShift。
 // ★ 注意更新率是 50Hz（每 20ms 一次），不是 20kHz！
 //   时间常数 = 2^shift × 20ms：
-//     shift=10 -> 20.5 秒（原来就是这么大，所以要等好几分钟）
 //     shift=2  -> 80 ms，3τ≈240ms 收敛
 //     shift=1  -> 40 ms，3τ≈120ms 收敛
 //   400 点正好一个工频周期，原始 RMS 已经比较稳，这里只做轻微平滑
@@ -196,10 +198,10 @@ volatile float ScopeIL[Scope_Size];     // 电感电流瞬时值 A
 volatile Uint16 ScopeIdx = 0U;          // 写指针
 volatile Uint16 ScopeCnt = 0U;          // 抽取计数
 
-// 抽取倍数：每 N 个中断存 1 点。
-//   1 -> 20kHz，200 点 = 10ms  = 半个工频周期（看细节、开关纹波）
-//   3 ->  6.7kHz，200 点 = 30ms = 1.5 个工频周期
-//   5 ->  4kHz，200 点 = 50ms = 2.5 个工频周期（和 TI 参考设计 pre_scalar=5 类似）
+// 抽取倍数：每 N 个中断存 1 点（160 点一屏）。
+//   1 -> 20kHz，一屏 8ms   = 0.4 个工频周期（看开关纹波细节）
+//   3 -> 6.7kHz，一屏 24ms = 1.2 个工频周期
+//   5 ->  4kHz，一屏 40ms  = 2 个工频周期
 // 改完 Graph 的 Sampling Rate Hz 要跟着改成 20000/N
 volatile Uint16 Scope_Prescale = 5U;
 
@@ -311,8 +313,11 @@ void main(void){
     PR_V.Fdb = 0;
     PR_V.X1 = 0; PR_V.X2 = 0;
     PR_V.Y1 = 0; PR_V.Y2 = 0;
-    PR_V.OutMin = -Iref_Max;       // 电容电流给定限幅
-    PR_V.OutMax =  Iref_Max;
+    // 限幅必须是 Q24！原来这里写的是裸小数 0.95，赋给 _iq 会被截断成 0，
+    // __clamp(y, 0, 0) 让 PR 输出恒等于 0，表现出来就是"闭环没输出"。
+    // 现在 PR 输出直接当调制比用，所以限到 ±Mod_Max
+    PR_V.OutMin = -Mod_Max;
+    PR_V.OutMax =  Mod_Max;
 
     // 初始化 PI_I：电容电流内环，输出就是调制比
     PI_I.Ref = 0;
@@ -619,12 +624,14 @@ __interrupt void ADC_ISR(void)
         // ---- 5. 电压外环 PR -> 电容电流给定 ----
         PR_V.Ref = Vref;
         PR_V.Fdb = Vout;
-        IRef = PR_Calc(&PR_V);
+//        IRef = PR_Calc(&PR_V);
+
+        Mod = PR_Calc(&PR_V);
 
         // ---- 6. 电流内环 PI -> 调制比，反馈是电容电流 ----
-        PI_I.Ref = IRef;
-        PI_I.Fdb = ICap;
-        Mod = PI_Calc(&PI_I);
+//        PI_I.Ref = IRef;
+//        PI_I.Fdb = ICap;
+//        Mod = PI_Calc(&PI_I);
 #else
         // 开环：瞬时调制比直接来自正弦表，不走 PR/PI
         Mod = _IQmpy(sin_val, Mod_Amp_Open);

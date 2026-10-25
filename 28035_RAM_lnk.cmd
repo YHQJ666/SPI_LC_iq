@@ -24,8 +24,11 @@ PAGE 0 :
    BEGIN      : origin = 0x000000, length = 0x000002
    RAMM0      : origin = 0x000050, length = 0x0003B0
 
-   // L1+L2+L3 连续 6K word，CLA 不用了全部给代码
-   RAML1L2L3  : origin = 0x008800, length = 0x001800
+   // L1+L2+L3 连续 6K word。顶部 0x500 word 划出来固定给示波器缓冲区，
+   // 剩下的给代码。这样代码怎么改都动不了缓冲区地址，
+   // CCS 的 Graph 里存的地址不会失效（否则每次重编都要重新填一次）
+   RAML1L2L3  : origin = 0x008800, length = 0x001300
+   SCOPEBUF   : origin = 0x009B00, length = 0x000500
 
    RESET      : origin = 0x3FFFC0, length = 0x000002
 
@@ -63,10 +66,10 @@ SECTIONS
 
    .ebss            : > RAML0,      PAGE = 1
    .econst          : > RAML0,      PAGE = 1
-   // 示波器数据缓冲区：单独一段，避免挤占 .ebss（见 main.c 的 scopeBufs）
-   scopeBufs        : > RAML1L2L3,  PAGE = 0
-   // 电感电流数组单独放 L0（L1L2L3 剩余空间不够第 4 个数组）
-   scopeBufs2       : > RAML0,      PAGE = 1
+   // 示波器数据缓冲区：固定地址 0x9B00 起的 SCOPEBUF 段，
+   // 代码长度变化不会影响它们的位置
+   scopeBufs        : > SCOPEBUF,   PAGE = 0
+   scopeBufs2       : > SCOPEBUF,   PAGE = 0
 
    .reset           : > RESET,      PAGE = 0, TYPE = DSECT
 }
