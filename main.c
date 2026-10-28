@@ -674,8 +674,17 @@ void main(void){
     {
 #if (SFRA_ENABLE == 1)
         // ---- 上位机通讯 + SFRA 后台状态机 ----
+        // 串口状态机每调一次只推进一步，而 SFRA_IQ_BACKGROUND 一次要算很久。
+        // 所以前后各多给几次机会，尽快把 FIFO 里的字节消化掉，避免丢字节后协议错位。
+        SerialHostComms();
+        SerialHostComms();
+        SerialHostComms();
         SerialHostComms();
         SFRA_IQ_BACKGROUND(&SFRA1);
+        SerialHostComms();
+        SerialHostComms();
+        SerialHostComms();
+        SerialHostComms();
 
         // GUI 点了 Start Sweep（或改了参数）：重新初始化并启动扫描
         if (initializationFlag == 1)

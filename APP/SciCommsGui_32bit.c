@@ -144,8 +144,12 @@ void SCIA_Init(long SCI_VBUS_CLOCKRATE, long SCI_BAUDRATE)
 
 	SciaRegs.SCICTL1.all = 0x0023;		/* 退出复位 */
 
-	SciaRegs.SCIFFTX.all = 0x8040;		/* 关闭FIFO增强(与TI原始工程一致) */
-	SciaRegs.SCIFFRX.all = 0x204f;
+	/* ★ 打开 SCI 的 16 级收发 FIFO（原版 0x8040 是关闭状态）。
+	   关闭时 RX 只有 1 个字节的缓冲，主循环里 SFRA_IQ_BACKGROUND 一慢就丢字节；
+	   协议错位后中间态超时会把 CommsOKflg 清 0，表现成「扫到第 N 个频点连接丢失」。
+	   开 FIFO 后 CPU 可以晚 16 字节（约 2.8ms @57600）才来取，容错大很多。 */
+	SciaRegs.SCIFFTX.all = 0xE040;		/* SCIFFENA=1, 复位 TXFIFO, 不开 FIFO 中断 */
+	SciaRegs.SCIFFRX.all = 0x204f;		/* 复位 RXFIFO, RXFFIL=15, 不开 FIFO 中断 */
 	SciaRegs.SCIFFCT.all = 0x0;
 	SciaRegs.SCIPRI.bit.SOFT = 0x0;
 	SciaRegs.SCIPRI.bit.FREE = 0x1;
