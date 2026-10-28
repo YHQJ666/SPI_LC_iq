@@ -108,10 +108,9 @@ static const _iq sin_table[Sin_Table_Size] =
 // 换算关系：显示值 = 原始整数 / 16777216，例如 1.0 = 16777216）
 volatile _iq  Vout = 0;             // 输出电压 V
 volatile _iq  Iout = 0;             // 输出电流 A
-volatile _iq  IL   = 0;             // 电感电流 A
-volatile _iq  ICap = 0;             // 电容电流 A = IL - Iout
+volatile _iq  IL   = 0;             // 电感电流 A（电流内环反馈）
 volatile _iq  Vref = 0;             // 电压给定 V
-volatile _iq  IRef = 0;             // 电容电流给定 A
+volatile _iq  IRef = 0;             // 电流环给定 A
 volatile _iq  Mod  = 0;             // 瞬时调制比
 volatile Uint32 PhaseAcc = 0;       // 相位累加器：高 8 位查表下标，低 24 位 Q24 小数
 volatile _iq  RefRamp = 0;          // 软启动给定峰值
@@ -152,7 +151,6 @@ volatile float CalPinIL   = 0.0f;
 //===========================================================================
 volatile long long RmsVoutSq = 0;
 volatile long long RmsIoutSq = 0;
-volatile long long RmsICapSq = 0;
 volatile long long RmsILSq   = 0;
 volatile long long AvgVinSum = 0;
 volatile long long AvgIinSum = 0;
@@ -172,9 +170,9 @@ volatile Uint16 RmsCommit = 0U;
 // 存的是**瞬时值**（ADCRESULT 减直流偏置再换算成工程量），用来当示波器看波形。
 // 用 float：Graph 里 Data Type 直接选 "32 bit floating point"、Q_Value=0。
 //
-// F28035 只有 10K 字 RAM，加了 OLED 之后已经很紧，所以只留 3 个电流通道：
-//   ScopeIout / ScopeICap / ScopeIL，每通道 128 点（float 占 2 字）
-// 输出电压的波形不存了（OLED 上有有效值），这样每通道点数能从 64 翻到 128。
+// F28035 只有 10K 字 RAM，加了 OLED 之后已经很紧，所以只留 2 个电流通道：
+//   ScopeIout / ScopeIL，每通道 128 点（float 占 2 字）
+// 输出电压和电容电流的波形都不存（OLED 上有有效值，电流环也不再用电容电流）。
 // 地址固定在链接器 SCOPEBUF / SCOPEBUF2 段，代码长度变化不会挪动它们。
 //===========================================================================
 #define Scope_Size      128U
@@ -187,14 +185,12 @@ volatile Uint16 RmsCommit = 0U;
 //   400 点正好一个工频周期，原始 RMS 已经比较稳，这里只做轻微平滑
 #define Rms_SmoothShift 2U
 
-// ScopeIout/ScopeICap 放 scopeBufs（SCOPEBUF，0x8600，512 字 = 2 x 256）
-// ScopeIL 放 scopeBufs2（SCOPEBUF2，0x9F00，256 字）
+// ScopeIout / ScopeIL 各 128 点（float 占 2 字 -> 每通道 256 字），
+// 都放 scopeBufs（SCOPEBUF，0x8600，512 字）；scopeBufs2 保留下来给以后加通道用。
 #pragma DATA_SECTION(ScopeIout, "scopeBufs")
-#pragma DATA_SECTION(ScopeICap, "scopeBufs")
-#pragma DATA_SECTION(ScopeIL,   "scopeBufs2")
+#pragma DATA_SECTION(ScopeIL,   "scopeBufs")
 
 volatile float ScopeIout[Scope_Size];   // 输出电流瞬时值 A
-volatile float ScopeICap[Scope_Size];   // 电容电流瞬时值 A
 volatile float ScopeIL[Scope_Size];     // 电感电流瞬时值 A
 volatile Uint16 ScopeIdx = 0U;          // 写指针
 volatile Uint16 ScopeCnt = 0U;          // 抽取计数
@@ -209,7 +205,6 @@ volatile Uint16 Scope_Prescale = 5U;
 // RMS 平滑滤波状态（Q24 定点，每 20ms 更新一次）
 volatile _iq FiltVout = 0;
 volatile _iq FiltIout = 0;
-volatile _iq FiltICap = 0;
 volatile _iq FiltIL   = 0;
 volatile _iq FiltMod  = 0;
 
@@ -231,7 +226,6 @@ volatile struct
     // 有效值 / 幅值（滤波后，给 Expressions 固定看）
     float VoutRms;      // 输出电压有效值 Vrms
     float IoutRms;      // 输出电流有效值 Arms
-    float ICapRms;      // 电容电流有效值 Arms
     float VoutAmp;      // 输出电压幅值 V（= VoutRms*1.414）
     float IoutAmp;      // 输出电流幅值 A
     float ILRms;        // 电感电流有效值 Arms
@@ -578,7 +572,6 @@ void main(void){
             {
                 float msV;
                 float msI;
-                float msC;
                 float msL;
 
                 RmsCommit = 0U;
@@ -587,7 +580,6 @@ void main(void){
                 // 均值 = /N，再 /2^32 就回到 A^2 的真实值（V^2 / A^2）
                 msV = (float)RmsVoutSq / (float)Rms_Cycle_Samples / 4294967296.0f;
                 msI = (float)RmsIoutSq / (float)Rms_Cycle_Samples / 4294967296.0f;
-                msC = (float)RmsICapSq / (float)Rms_Cycle_Samples / 4294967296.0f;
                 msL = (float)RmsILSq   / (float)Rms_Cycle_Samples / 4294967296.0f;
 
                 // 开方得真实有效值，再走一阶 IIR 平滑：
@@ -596,7 +588,6 @@ void main(void){
                 {
                     _iq xv = (_iq)(sqrtf(msV) * 16777216.0f);
                     _iq xi = (_iq)(sqrtf(msI) * 16777216.0f);
-                    _iq xc = (_iq)(sqrtf(msC) * 16777216.0f);
                     _iq xl = (_iq)(sqrtf(msL) * 16777216.0f);
                     _iq xm = ModPk;         // 本周期 |Mod| 的峰值
 
@@ -604,13 +595,11 @@ void main(void){
 
                     FiltVout += (xv - FiltVout) >> Rms_SmoothShift;
                     FiltIout += (xi - FiltIout) >> Rms_SmoothShift;
-                    FiltICap += (xc - FiltICap) >> Rms_SmoothShift;
                     FiltIL   += (xl - FiltIL)   >> Rms_SmoothShift;
                     FiltMod  += (xm - FiltMod)  >> Rms_SmoothShift;
 
                     Debug_View.VoutRms = _IQtoF(FiltVout);
                     Debug_View.IoutRms = _IQtoF(FiltIout);
-                    Debug_View.ICapRms = _IQtoF(FiltICap);
                     Debug_View.ILRms   = _IQtoF(FiltIL);
                     Debug_View.ModAmp  = _IQtoF(FiltMod);   // 峰值就是幅值，不用再乘
                 }
@@ -625,7 +614,6 @@ void main(void){
 
                 RmsVoutSq = 0;
                 RmsIoutSq = 0;
-                RmsICapSq = 0;
                 RmsILSq   = 0;
                 AvgVinSum = 0;
                 AvgIinSum = 0;
@@ -668,7 +656,6 @@ __interrupt void ADC_ISR(void)
     Vout = ADC_To_IQ_Cal(AdcResult.ADCRESULT1, ADC_Vout_Offset, VoutOffNeg, ADC_Vout_Span);
     Iout = ADC_To_IQ_Cal(AdcResult.ADCRESULT2, ADC_Iout_Offset, IoutOffNeg, ADC_Iout_Span);
     IL   = ADC_To_IQ_Cal(AdcResult.ADCRESULT3, ADC_IL_Offset,   ILOffNeg,   ADC_IL_Span);
-    ICap = IL - Iout;                       // 电容电流 = 电感电流 - 输出电流
 
     // 输入电压（ADCB1）/ 输入电流（ADCB0）：只存原始码，不换算、不参与控制环。
     // 中断里一个乘法都不多做，后面加输入保护时再按 dcac_cfg.h 里的
@@ -682,12 +669,10 @@ __interrupt void ADC_ISR(void)
     {
         long xv = (long)(Vout >> 8);
         long xi = (long)(Iout >> 8);
-        long xc = (long)(ICap >> 8);
         long xl = (long)(IL   >> 8);
 
         RmsVoutSq += (long long)xv * (long long)xv;
         RmsIoutSq += (long long)xi * (long long)xi;
-        RmsICapSq += (long long)xc * (long long)xc;
         RmsILSq   += (long long)xl * (long long)xl;
     }
     AvgVinSum += (long long)Vin;
@@ -725,7 +710,6 @@ __interrupt void ADC_ISR(void)
             ScopeCnt = 0U;
 
             ScopeIout[ScopeIdx] = _IQtoF(Iout);
-            ScopeICap[ScopeIdx] = _IQtoF(ICap);
             ScopeIL[ScopeIdx]   = _IQtoF(IL);
 
             ScopeIdx++;
@@ -821,7 +805,7 @@ __interrupt void ADC_ISR(void)
 
         // ---- 6. 电流内环 PI -> 调制比 ----
         PI_I.Ref = IRef;
-        PI_I.Fdb = ICap;
+        PI_I.Fdb = IL;
         Mod = PI_Calc(&PI_I);
 #else
         // 开环：瞬时调制比直接来自正弦表，不走 PR/PI

@@ -22,15 +22,13 @@ MEMORY
 {
 PAGE 0 :
    // 示波器缓冲固定区（不随代码变化）
-   //   SCOPEBUF  : 0x8600 起 512 字，放 ScopeIout / ScopeICap（各 256 字）
-   //   SCOPEBUF2 : L1L2L3 尾部 256 字，放 ScopeIL
+   //   SCOPEBUF : 0x8600 起 512 字，放 ScopeIout / ScopeIL（各 256 字）
    SCOPEBUF   : origin = 0x008600, length = 0x000200
    BEGIN      : origin = 0x000000, length = 0x000002
    RAMM0      : origin = 0x000050, length = 0x0003B0
 
-   // 代码区：5812 字，L1L2L3 剩下的 256 字给 SCOPEBUF2
-   RAML1L2L3  : origin = 0x008800, length = 0x001700
-   SCOPEBUF2  : origin = 0x009F00, length = 0x000100
+   // 代码区：整个 L1L2L3 6144 字
+   RAML1L2L3  : origin = 0x008800, length = 0x001800
 
 
    RESET      : origin = 0x3FFFC0, length = 0x000002
@@ -67,9 +65,8 @@ SECTIONS
 
    .ebss            : > RAML0,      PAGE = 1
    .econst          : > RAML0,      PAGE = 1
-   // 示波器数据缓冲区：固定在 SCOPEBUF / SCOPEBUF2，代码长度变化不影响
+   // 示波器数据缓冲区：固定在 SCOPEBUF，代码长度变化不影响
    scopeBufs        : > SCOPEBUF,   PAGE = 0
-   scopeBufs2       : > SCOPEBUF2,  PAGE = 0
 
    .reset           : > RESET,      PAGE = 0, TYPE = DSECT
 }
