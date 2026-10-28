@@ -1,34 +1,37 @@
 /*
  * 28035_RAM_lnk.cmd
  *
- * F28035 单相离网逆变（全部在 CPU 上运行）RAM 链接命令文件
+ * F28035 闁告娲滃ù澶岀矉閼姐倗绉归梺顐㈡瑜板鏁嶉崼婵嗗伎闂侇喓鍔屽﹢?CPU 濞戞挸锕ㄧ换宥囨偘瀹€瀣RAM 闂佸墽鍋撶敮鎾川閹存帗濮㈤柡鍌氭矗濞?
  *
- * CLA 已经不再使用，所以 L1/L2/L3 全部归还给 CPU，代码放在 L1+L2+L3，
- * 数据放在 L0 和 M1，M0 放 ramfuncs 和初始化表。整片 SARAM 都可以用。
+ * CLA 鐎规瓕灏欑划鈩冪▔瀹ュ懎鏅欏ù锝堟硶閺併倝鏁嶇仦鎯ь暡濞?L1/L2/L3 闁稿繈鍔戦崕纾嬨亹閹烘洜绠风紓?CPU闁挎稑濂旈崬顒勬儘娴ｈ鏉归柛?L1+L2+L3闁?
+ * 闁轰胶澧楀畵渚€寮ㄩ幆褎韬?L0 闁?M1闁挎稑顒? 闁衡偓?ramfuncs 闁告粌鑻崹鍨叏鐎ｎ亜顕ч悶娑栧妸閳ь剙鍊归弳锝夋偋?SARAM 闂侇喛妫勮ぐ鍙夌閵壯勬殢闁?
  *
- * 存储器分配：
+ * 閻庢稒锚閸嬪秹宕抽妸銉ョ€婚梺鏉跨▌缁?
  *   M0  0x000050~0x0003FF  944 word   ramfuncs / .pinit / .switch
- *   M1  0x000480~0x0007FF  896 word   栈
- *   L0  0x008000~0x0087FF  2048 word  数据（.ebss / .econst）
+ *   M1  0x000480~0x0007FF  896 word   闁?
+ *   L0  0x008000~0x0087FF  2048 word  闁轰胶澧楀畵渚€鏁?ebss / .econst闁?
  *   L1  0x008800~0x008BFF  1024 word  \
- *   L2  0x008C00~0x008FFF  1024 word   > 连起来放代码（.text / .cinit / IQmath）
+ *   L2  0x008C00~0x008FFF  1024 word   > 閺夆晝鍋犻幑锝夊级閵夛附鏉瑰ù鐙呯悼閻栨粓鏁?text / .cinit / IQmath闁?
  *   L3  0x009000~0x009FFF  4096 word  /
  *
- * 起始地址 BEGIN = 0x000000，对应 boot-to-SARAM 模式，
- * 用调试器直接 Load Program 跑，不需要烧 Flash
+ * 閻犙冨槻椤劙宕烽弶鎸庣祷 BEGIN = 0x000000闁挎稑鑻顔芥償?boot-to-SARAM 婵☆垪鈧磭纭€闁?
+ * 闁活潿鍔忛惃鐔烘嫚閺囩偞鐝ら柣鈺佺摠鐢?Load Program 閻犵儤鍩婄槐婵囩▔瀹ュ浠橀悷鏇氳兌閸?Flash
  */
 
 MEMORY
 {
 PAGE 0 :
+   // 示波器缓冲固定区（不随代码变化）
+   //   SCOPEBUF  : 0x8600 起 512 字，放 ScopeIout / ScopeICap（各 256 字）
+   //   SCOPEBUF2 : L1L2L3 尾部 256 字，放 ScopeIL
+   SCOPEBUF   : origin = 0x008600, length = 0x000200
    BEGIN      : origin = 0x000000, length = 0x000002
    RAMM0      : origin = 0x000050, length = 0x0003B0
 
-   // L1+L2+L3 连续 6K word。顶部 0x500 word 划出来固定给示波器缓冲区，
-   // 剩下的给代码。这样代码怎么改都动不了缓冲区地址，
-   // CCS 的 Graph 里存的地址不会失效（否则每次重编都要重新填一次）
-   RAML1L2L3  : origin = 0x008800, length = 0x001300
-   SCOPEBUF   : origin = 0x009B00, length = 0x000500
+   // 代码区：5812 字，L1L2L3 剩下的 256 字给 SCOPEBUF2
+   RAML1L2L3  : origin = 0x008800, length = 0x001700
+   SCOPEBUF2  : origin = 0x009F00, length = 0x000100
+
 
    RESET      : origin = 0x3FFFC0, length = 0x000002
 
@@ -42,13 +45,12 @@ PAGE 1 :
    BOOT_RSVD  : origin = 0x000002, length = 0x00004E
    RAMM1      : origin = 0x000480, length = 0x000380
 
-   // L0 专门给数据
-   RAML0      : origin = 0x008000, length = 0x000800
+   // L0 濞戞挻鎹囧Λ顒傜磼濞嗘劖娈堕柟?
+   RAML0      : origin = 0x008000, length = 0x000600
 }
 
 SECTIONS
 {
-   // 程序
    codestart        : > BEGIN,      PAGE = 0
    ramfuncs         : > RAMM0,      PAGE = 0
    .pinit           : > RAMM0,      PAGE = 0
@@ -60,16 +62,14 @@ SECTIONS
 
    IQmathTables     : > IQTABLES,   PAGE = 0, TYPE = NOLOAD
 
-   // 数据
    .stack           : > RAMM1,      PAGE = 1
    .esysmem         : > RAMM1,      PAGE = 1
 
    .ebss            : > RAML0,      PAGE = 1
    .econst          : > RAML0,      PAGE = 1
-   // 示波器数据缓冲区：固定地址 0x9B00 起的 SCOPEBUF 段，
-   // 代码长度变化不会影响它们的位置
+   // 示波器数据缓冲区：固定在 SCOPEBUF / SCOPEBUF2，代码长度变化不影响
    scopeBufs        : > SCOPEBUF,   PAGE = 0
-   scopeBufs2       : > SCOPEBUF,   PAGE = 0
+   scopeBufs2       : > SCOPEBUF2,  PAGE = 0
 
    .reset           : > RESET,      PAGE = 0, TYPE = DSECT
 }
