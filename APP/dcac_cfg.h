@@ -48,10 +48,19 @@
 #include "DSP28x_Project.h"
 
 // ---- 1. 环路模式 ----
-#define Loop_Open       0
-#define Loop_Closed     1
-// 0 = 开环（只出正弦，不走 PR/PI），1 = 闭环（电压外环 PR + 电容电流内环 PI）
-#define Loop_Mode       0
+// 统一成一个 LOOP_MODE，取代原来的 Loop_Open/Loop_Closed/Loop_Mode。
+// 编号 0~3 与 Boost_SFRA 一致；4 是 SFRA 测受控体专用的固定占空比开环。
+// ★ 0 和 4 必须分开：0 是"正弦 + 软启动"的现状行为，4 是直流固定占空比。
+#define LOOP_SINE_OPEN    0   /* 正弦开环 + 软启动（改动前的现状） */
+#define LOOP_VOLT_CLOSED  1   /* 电压单环 */
+#define LOOP_CURR_CLOSED  2   /* 电流单环 */
+#define LOOP_DUAL         3   /* 电压 + 电流双环 */
+#define LOOP_FIXED_DUTY   4   /* 固定占空比开环（SFRA 测受控体用） */
+
+// 允许 build configuration 用 -dLOOP_MODE=n 覆盖（必须 #ifndef 包住，否则头文件赢）
+#ifndef LOOP_MODE
+#define LOOP_MODE         LOOP_SINE_OPEN
+#endif
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----
 // ePWM 增减计数：fsw = TBCLK / (2 * TBPRD)

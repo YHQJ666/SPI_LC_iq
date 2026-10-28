@@ -32,7 +32,8 @@
  *   Q24 的动态范围只有 ±128，本工程最大的运行量是 80V（电压满量程），
  *   超过 ±128 的中间量（TBPRD/2=750、2*满量程=160）在各自模块里换低 Q 处理
  *
- * 环路模式由 dcac_cfg.h 的 Loop_Mode 选择：0 开环，1 闭环
+ * 环路模式由 dcac_cfg.h 的 LOOP_MODE 选择：
+ *   0 正弦开环 / 1 电压单环 / 2 电流单环 / 3 双环 / 4 固定占空比开环
  * 本文件不含并网逻辑（离网模式）
  */
 
@@ -387,7 +388,7 @@ static void Oled_Task(void)
         OLED_ShowString(0U, 0U, (u8 *)"S:OV ");
     }
 
-#if (Loop_Mode == Loop_Closed)
+#if (LOOP_MODE != LOOP_SINE_OPEN)
     OLED_ShowString(48U, 0U, (u8 *)"L:CLOSE");
 #else
     OLED_ShowString(48U, 0U, (u8 *)"L:OPEN");
@@ -810,15 +811,15 @@ __interrupt void ADC_ISR(void)
         sin_val = sin_table[(Uint16)(PhaseAcc >> Phase_Acc_Bits)];
         Vref = _IQmpy(sin_val, RefRamp);
 
-#if (Loop_Mode == Loop_Closed)
-        // ---- 5. 电压外环 PR -> 电容电流给定 ----
+#if (LOOP_MODE != LOOP_SINE_OPEN)
+        // ---- 5. 电压外环 PR -> 电流给定 ----
         PR_V.Ref = Vref;
         PR_V.Fdb = Vout;
         IRef = PR_Calc(&PR_V);
 
 
 
-        // ---- 6. 电流内环 PI -> 调制比，反馈是电容电流 ----
+        // ---- 6. 电流内环 PI -> 调制比 ----
         PI_I.Ref = IRef;
         PI_I.Fdb = ICap;
         Mod = PI_Calc(&PI_I);
