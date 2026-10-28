@@ -208,9 +208,11 @@ void GetCmdByte(void)		/* 状态1: 等命令字节 */
 		SerialCommsTimer = 0;
 		EchoCmdByte();
 	}
-	else if (SciaRegs.SCIRXST.bit.BRKDT == 1 || SerialCommsTimer > 2500)	/* 约2.5s超时 */
+	else if (SciaRegs.SCIRXST.bit.BRKDT == 1 || SerialCommsTimer > 20000)	/* 20s 空闲才复位 */
 	{
-		/* 检测到break或者串口超时, 复位SCI(某些USB转串口在仿真器RST后会卡住) */
+		/* 检测到break或者长时间空闲, 复位SCI(某些USB转串口在仿真器RST后会卡住)
+		   原版是 2.5s。一次扫频要几十秒, 期间上位机可能几秒不发包,
+		   2.5s 会把正常空闲当成断开, 表现成「扫到 1/8 就连接丢失」。 */
 		SciaRegs.SCICCR.all  = 0x0007;
 		SciaRegs.SCICTL1.all = 0x0003;
 		SciaRegs.SCICTL2.all = 0x0000;
