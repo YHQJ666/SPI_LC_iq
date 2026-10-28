@@ -41,6 +41,7 @@
 #include "DSP2803x_GlobalPrototypes.h"  // 全局函数原型声明文件
 #include "DSP2803x_EPwm_defines.h"
 #include <math.h>
+#include <string.h>                     /* Flash 版要用 memcpy 搬 ramfuncs */
 #include "IQmathLib.h"                  // IQ 定点数学库（GLOBAL_Q 已在 dcac_cfg.h 里定为 24）
 #include "dcac_cfg.h"
 #include "pid.h"
@@ -432,6 +433,15 @@ void main(void){
 
     // 系统初始化（时钟、看门狗、外设时钟）
     InitSysCtrl();
+
+#if (SFRA_FLASH_BUILD == 1)
+    // ---- Flash 运行：先把 ramfuncs 从 Flash 搬到 RAM，再设 Flash 等待周期 ----
+    // 顺序不能反：InitFlash() 自己在 ramfuncs 段里，没搬之前它在 Flash 里跑，
+    // 而那时 Flash 等待周期还没设好，会取到错指令。
+    memcpy(&RamfuncsRunStart, &RamfuncsLoadStart,
+           (size_t)&RamfuncsLoadEnd - (size_t)&RamfuncsLoadStart);
+    InitFlash();
+#endif
 
     // 中断系统初始化
     DINT;
