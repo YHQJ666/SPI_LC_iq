@@ -19,3 +19,11 @@ Task 3: 实测 SFRA_ENABLE=1 时 OLED 代码被剔除后代码区空闲约 995 �
 Task 4: complete (commits e2d0309..HEAD, tests: Flash+SFRA_ENABLE=1 链接 exit 0；ramfuncs LOAD 0x3F0000 -> RUN 0x8000)
 Task 4: 实测 Flash 版 FLASHA 用 5080/8064、FLASHC 全空、dataRAM1 用 728/4096，余量足够放 SFRA(1511 字代码 + 512 字数据)。
 Task 4: Ruling: SFRA 头文件用绝对路径 #include、SFRA 库用 .cmd 里的 -l 引入，都不改 .cproject —— 与 Task 3 的 Ruling 一致，代价是路径写死在源码/脚本里，换 controlSUITE 版本要改两处。
+Task 5: complete (SFRA_IQ lib 730 字 + SciCommsGui 781 字全部链进 Flash 版，map 里可见 SFRA_IQ_BACKGROUND/INIT/COLLECT)
+Task 5: Ruling: SFRA 头文件用绝对路径 #include（APP/sfra_cfg.h）、库用 28035_FLASH_lnk.cmd 里的 -l 引入 —— 不改 .cproject。
+Task 5: 坑: Boost 的 SciCommsGui_32bit.c 是 UTF-8 不是 GBK；按 GBK 解会全乱码。重做后无 U+FFFD。
+Task 6: complete (四个 LOOP_MODE 的注入/采集点 + 参考冻结 SFRA_VREF_DC=20V)
+Task 7: complete (SFRA_ENABLE=1 强制 Protect_Enable=1；SFRA_INJ/SFRA_COL 故障门)
+Task 4 fix: SFRA_IQ_Data 落在 0x93D8 不是 64 对齐 -> 单独划 SFRA_DATA(0x9C00) 后为 0x9C00，余 0。
+Task 8: 两套构建均 exit 0: OLED(RAM, ENABLE=0) 代码 0x15CD/0x1800 余 563 字; SFRA(Flash, ENABLE=1) FLASHA 0x1E76/0x1F80 余 266 字 + FLASHC 8192 备用。
+Task 8: 未完成的上板验证（需用户硬件）：OLED 8 行、示波器两通道、SFRA GUI 连接、扫 Plant。

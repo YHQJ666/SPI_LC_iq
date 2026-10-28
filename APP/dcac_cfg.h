@@ -376,6 +376,11 @@
 #endif
 #endif
 
+// 互锁：就算有人在 build 配置里用 -dProtect_Enable=0 硬覆盖，也编不过
+#if (SFRA_ENABLE == 1) && (Protect_Enable == 0)
+#error "SFRA_ENABLE=1 必须打开 Protect_Enable，扫频注入不允许在无保护下进行"
+#endif
+
 // ---- 8. 保护阈值与软启动 ----
 #define OV_Volts_F      45.0f           // 输出过压阈值 V（峰值）
 #define OV_Volts        _IQ(OV_Volts_F)

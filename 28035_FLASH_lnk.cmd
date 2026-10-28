@@ -97,8 +97,8 @@ SECTIONS
    .stack           : > RAMM0,           PAGE = 1
    .esysmem         : > RAMM1,           PAGE = 1
 
-   /* SFRA 库要求的段：必须 64 字对齐，单独放 SFRA_DATA（0x9C00 起） */
-   SFRA_IQ_Data     : > SFRA_DATA,       PAGE = 1
+   /* SFRA 库要求的段：单独放 SFRA_DATA（0x9C00 起），并显式 ALIGN=64 兜底 */
+   SFRA_IQ_Data     : > SFRA_DATA, ALIGN(64), PAGE = 1
 
    /* 示波器缓冲区：地址随本脚本走，Flash 版下和 RAM 版不同，用数组名访问 */
    scopeBufs        : > dataRAM1,        PAGE = 1

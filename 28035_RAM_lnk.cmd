@@ -1,21 +1,24 @@
 /*
  * 28035_RAM_lnk.cmd
  *
- * F28035 闁告娲滃ù澶岀矉閼姐倗绉归梺顐㈡瑜板鏁嶉崼婵嗗伎闂侇喓鍔屽﹢?CPU 濞戞挸锕ㄧ换宥囨偘瀹€瀣RAM 闂佸墽鍋撶敮鎾川閹存帗濮㈤柡鍌氭矗濞?
+ * F28035 单相离网逆变 —— 从 SARAM 运行版本（调试用，下载最快）
  *
- * CLA 鐎规瓕灏欑划鈩冪▔瀹ュ懎鏅欏ù锝堟硶閺併倝鏁嶇仦鎯ь暡濞?L1/L2/L3 闁稿繈鍔戦崕纾嬨亹閹烘洜绠风紓?CPU闁挎稑濂旈崬顒勬儘娴ｈ鏉归柛?L1+L2+L3闁?
- * 闁轰胶澧楀畵渚€寮ㄩ幆褎韬?L0 闁?M1闁挎稑顒? 闁衡偓?ramfuncs 闁告粌鑻崹鍨叏鐎ｎ亜顕ч悶娑栧妸閳ь剙鍊归弳锝夋偋?SARAM 闂侇喛妫勮ぐ鍙夌閵壯勬殢闁?
+ * 注意：F2803x 的 L0/L1/L2/L3 在 PAGE0/PAGE1 上是同一块物理内存，
+ *       不能同时出现在两个 PAGE 里，否则链接器会报 overlap。
+ *       本脚本按 CPU 侧统一使用：代码 L1+L2+L3，数据 L0 和 M1。
  *
- * 閻庢稒锚閸嬪秹宕抽妸銉ョ€婚梺鏉跨▌缁?
+ * 内存分配：
  *   M0  0x000050~0x0003FF  944 word   ramfuncs / .pinit / .switch
- *   M1  0x000480~0x0007FF  896 word   闁?
- *   L0  0x008000~0x0087FF  2048 word  闁轰胶澧楀畵渚€鏁?ebss / .econst闁?
+ *   M1  0x000480~0x0007FF  896 word   栈
+ *   L0  0x008000~0x0087FF  2048 word   .ebss / .econst（其中 0x8600 起划给示波器）
  *   L1  0x008800~0x008BFF  1024 word  \
- *   L2  0x008C00~0x008FFF  1024 word   > 閺夆晝鍋犻幑锝夊级閵夛附鏉瑰ù鐙呯悼閻栨粓鏁?text / .cinit / IQmath闁?
+ *   L2  0x008C00~0x008FFF  1024 word   > 代码 .text / .cinit / IQmath
  *   L3  0x009000~0x009FFF  4096 word  /
  *
- * 閻犙冨槻椤劙宕烽弶鎸庣祷 BEGIN = 0x000000闁挎稑鑻顔芥償?boot-to-SARAM 婵☆垪鈧磭纭€闁?
- * 闁活潿鍔忛惃鐔烘嫚閺囩偞鐝ら柣鈺佺摠鐢?Load Program 閻犵儤鍩婄槐婵囩▔瀹ュ浠橀悷鏇氳兌閸?Flash
+ * 入口 BEGIN = 0x000000：boot-to-SARAM 引导，
+ * 由调试器 Load Program 把程序装进 SARAM，不写 Flash。
+ *
+ * SFRA 扫频版必须改用 28035_FLASH_lnk.cmd（代码放 Flash，SARAM 全留给数据）。
  */
 
 MEMORY
@@ -43,7 +46,7 @@ PAGE 1 :
    BOOT_RSVD  : origin = 0x000002, length = 0x00004E
    RAMM1      : origin = 0x000480, length = 0x000380
 
-   // L0 濞戞挻鎹囧Λ顒傜磼濞嗘劖娈堕柟?
+   // L0 数据区（0x8600~0x87FF 已经划给 SCOPEBUF，所以这里只到 0x85FF）
    RAML0      : origin = 0x008000, length = 0x000600
 }
 

@@ -455,6 +455,11 @@ int16    initializationFlag = 0;  // GUI 点 Start 时置 1
 
 static Uint16 SfraTickCnt = 0U;
 
+// 上位机协议没用到的三张表指向这里，防止空指针写
+static int16  SfraDummyTxt[16];
+static int16  SfraDummySldr[16];
+static int32  SfraDummyGet[16];
+
 static void SCIA_GPIO_Init(void)
 {
     EALLOW;
@@ -507,6 +512,19 @@ void SFRA_Init(void)
 
     varSetBtnList[0] = (int16 *)&initializationFlag;
 
+    // 命令 1/3/6 会解引用 varSetTxtList / varSetSldrList / dataGetList，
+    // 这三张表本工程没用到，但不能留空指针——静默的 BSS 是 0，
+    // 串口噪声凑出一个命令 1 就会往地址 0 写。统一指向哨兵变量。
+    {
+        Uint16 k;
+        for (k = 0U; k < 16U; k++)
+        {
+            varSetTxtList[k]  = &SfraDummyTxt[k];
+            varSetSldrList[k] = &SfraDummySldr[k];
+            dataGetList[k]    = &SfraDummyGet[k];
+        }
+    }
+
     arrayGetList[0] = (int32 *)FreqVect;
     arrayGetList[1] = (int32 *)OL_MagVect;
     arrayGetList[2] = (int32 *)OL_PhaseVect;
@@ -544,13 +562,17 @@ void main(void){
     InitSysCtrl();
 
 #if (SFRA_FLASH_BUILD == 1)
-    // ---- Flash 运行：先把 ramfuncs 从 Flash 搬到 RAM，再设 Flash 等待周期 ----
+    // ---- Flash 运行：先把 ramfuncs 从 Flash 搬到 RAM ----
     // 顺序不能反：InitFlash() 自己在 ramfuncs 段里，没搬之前它在 Flash 里跑，
     // 而那时 Flash 等待周期还没设好，会取到错指令。
     memcpy(&RamfuncsRunStart, &RamfuncsLoadStart,
            (size_t)&RamfuncsLoadEnd - (size_t)&RamfuncsLoadStart);
-    InitFlash();
 #endif
+    // InitFlash() 无条件调用：
+    //   RAM 版里 ramfuncs 是 LOAD=RUN=SARAM，调它没有副作用；
+    //   但能挡住「换了 Flash 脚本却忘了开 SFRA_FLASH_BUILD」这种静默失败
+    //   ——那样会从 Flash 取指却用复位默认等待周期，20kHz 中断根本跑不完。
+    InitFlash();
 
     // 中断系统初始化
     DINT;
@@ -944,39 +966,70 @@ __interrupt void ADC_ISR(void)
         sin_val = sin_table[(Uint16)(PhaseAcc >> Phase_Acc_Bits)];
         Vref = _IQmpy(sin_val, RefRamp);
 
-#if (SFRA_ENABLE == 1)
+#if (SFRA_ENABLE == 1) && (LOOP_MODE != LOOP_SINE_OPEN)
         // ---- SFRA 扫频版：参考冻结成直流（单相逆变器的正弦参考没有稳态工作点）----
-        if (Vref > SFRA_VREF_DC)  { Vref = SFRA_VREF_DC; }
-        if (Vref < -SFRA_VREF_DC) { Vref = -SFRA_VREF_DC; }
+        // ★ 必须跟软启动一起走：RefRamp 从 0 斜坡到 Vref_Peak，
+        //   这里按 RefRamp 的比例给出直流工作点。直接赋 20V/0.4 的话，
+        //   复位后第一个中断就把功率级顶起来，绕过了 Run_Enable 和软启动。
+        {
+            _iq op = (LOOP_MODE == LOOP_FIXED_DUTY) ? SFRA_DUTY_DC
+                   : (LOOP_MODE == LOOP_CURR_CLOSED) ? SFRA_IREF_DC
+                   : SFRA_VREF_DC;
+            Vref = _IQmpy(op, RefRamp);         // RefRamp 就是 0~1 的斜坡
+            if (Vref > Vref_Peak)  { Vref = Vref_Peak; }
+            if (Vref < -Vref_Peak) { Vref = -Vref_Peak; }
+        }
 #endif
 
 #if (LOOP_MODE == LOOP_FIXED_DUTY)
         // ---- 固定占空比开环：只用于 SFRA 测受控体 ----
         // 注入点 = 占空比(调制比)，采集点 = 电感电流
-        Mod  = SFRA_INJ(SFRA_DUTY_DC);
+        Mod  = SFRA_INJ(Vref);
         IRef = 0;
         PR_V.X1 = 0; PR_V.X2 = 0;
         PR_V.Y1 = 0; PR_V.Y2 = 0;
         PI_I.Integral = 0;
 
-#elif (LOOP_MODE != LOOP_SINE_OPEN)
-        // ---- 5. 电压外环 PR -> 电流给定 ----
+#elif (LOOP_MODE == LOOP_CURR_CLOSED)
+        // ---- 电流单环：电压环旁路，注入点在电流给定 ----
+        // ★ 这个分支里不能再调用 SFRA_INJ 于电压给定，否则一个中断注入两次，
+        //   库内部相位每个采样推进两步，实测频率会是标签值的 2 倍。
+        PR_V.X1 = 0; PR_V.X2 = 0;
+        PR_V.Y1 = 0; PR_V.Y2 = 0;
 #if (SFRA_ENABLE == 1)
-        // 注入点在电压给定，采集点 = 输出电压（测电压环闭环增益）
-        PR_V.Ref = SFRA_INJ(SFRA_VREF_DC);
+        IRef = SFRA_INJ(Vref);
+#else
+        IRef = Vref;
+#endif
+        PI_I.Ref = IRef;
+        PI_I.Fdb = IL;
+        Mod = PI_Calc(&PI_I);
+
+#elif (LOOP_MODE == LOOP_VOLT_CLOSED)
+        // ---- 电压单环：电流环旁路，PR 输出直接当调制比 ----
+        // （PR 输出的量纲本来是"电流给定"，单环时直接当调制比用，
+        //   增益靠 KP_V/KR_V 调，和之前跑单电压环时一样）
+#if (SFRA_ENABLE == 1)
+        PR_V.Ref = SFRA_INJ(Vref);
 #else
         PR_V.Ref = Vref;
 #endif
         PR_V.Fdb = Vout;
-        IRef = PR_Calc(&PR_V);
+        IRef    = PR_Calc(&PR_V);           // 这个量就是受控体输入
+        Mod     = IRef;
+        PI_I.Integral = 0;
 
-        // ---- 6. 电流内环 PI -> 调制比 ----
-#if (SFRA_ENABLE == 1) && (LOOP_MODE == LOOP_CURR_CLOSED)
-        // 电流单环：注入点在电流给定，采集点 = 电感电流
-        PI_I.Ref = SFRA_INJ(SFRA_IREF_DC);
+#elif (LOOP_MODE == LOOP_DUAL)
+        // ---- 双环：PR 给电流给定，PI 给调制比 ----
+#if (SFRA_ENABLE == 1)
+        PR_V.Ref = SFRA_INJ(Vref);
 #else
-        PI_I.Ref = IRef;
+        PR_V.Ref = Vref;
 #endif
+        PR_V.Fdb = Vout;
+        IRef = PR_Calc(&PR_V);              // PR 的输出 = 电流环给定 = 受控体输入
+
+        PI_I.Ref = IRef;
         PI_I.Fdb = IL;
         Mod = PI_Calc(&PI_I);
 #else
@@ -988,13 +1041,15 @@ __interrupt void ADC_ISR(void)
         PI_I.Integral = 0;
 #endif
 
-#if (SFRA_ENABLE == 1)
-        // ---- 采集：输入是注入的那个量，输出是被控量 ----
-        // 每个中断只能调用一次 INJECT / 一次 COLLECT，与上面严格配对
+#if (SFRA_ENABLE == 1) && (LOOP_MODE != LOOP_SINE_OPEN)
+        // ---- 采集：第一个参数是"受控体的输入"，第二个是"受控体的输出" ----
+        // 参考量 r 由 SFRA_IQ_INJECT 自己记着，所以电压环这里要传 PR 的输出 IRef，
+        // 不能传 PR_V.Ref（那等于 u = r，算出来的是闭环增益 Y/R，不是受控体）
+        // 每个中断只能调用一次 INJECT / 一次 COLLECT
 #if (LOOP_MODE == LOOP_FIXED_DUTY) || (LOOP_MODE == LOOP_CURR_CLOSED)
         SFRA_COL(&Mod, &IL);
 #else
-        SFRA_COL(&PR_V.Ref, &Vout);
+        SFRA_COL(&IRef, &Vout);
 #endif
 #endif
 
