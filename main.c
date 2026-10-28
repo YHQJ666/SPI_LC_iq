@@ -684,10 +684,9 @@ void main(void){
             initializationFlag = 0;
             SFRA1.start = 1;
         }
-        else if (FaultLatch != FAULT_NONE)
-        {
-            SFRA1.start = 0;    // 保护动作就停扫，别把故障期的数据当结果
-        }
+        // 不要在这里清 SFRA1.start！Boost 里没有任何地方清它。
+        // 库的 start 由 SFRA_IQ_BACKGROUND 自己管，是它判断"扫频做完没有"的状态位；
+        // 外部（尤其在保护锁存时）把它清 0，会让库停在中途而 FreqIndex 还能涨。
 #endif
 
         if (FaultLatch != FAULT_NONE)

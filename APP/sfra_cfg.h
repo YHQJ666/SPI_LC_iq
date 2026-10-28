@@ -62,20 +62,15 @@ extern void SFRA_Init(void);
 extern void SCIA_Init(long SCI_VBUS_CLOCKRATE, long SCI_BAUDRATE);
 extern void SerialHostComms(void);
 
-/* ---- 注入/采集的故障门 ----
- * 保护一动作就停止注入，否则扫出来的数据全是故障期的垃圾：
- *   SFRA_INJ : 正常时注入，故障时原样返回直流工作点（相位不前进，等于暂停）
- *   SFRA_COL : 正常时采集，故障时什么都不做（与 INJECT 严格配对）
+/* ---- 注入/采集 ----
+ * 和 Boost 保持一致：ISR 里无条件调用 SFRA_IQ_INJECT / SFRA_IQ_COLLECT。
+ * Boost 里没有故障门 —— 库内部按 start 自管相位，跳过 INJECT 会让相位停住
+ * 而 COLLECT 还在累加，扫出来的数据是错的。保护由 Protect 模块单独负责。
  */
-#define SFRA_INJ(dc)                                                            \
-    ((FaultLatch == FAULT_NONE) ? (int32)SFRA_IQ_INJECT((int32)(dc)) : (int32)(dc))
+#define SFRA_INJ(dc)        ((int32)SFRA_IQ_INJECT((int32)(dc)))
 
 #define SFRA_COL(in, fdb)                                                       \
-    do {                                                                        \
-        if (FaultLatch == FAULT_NONE) {                                         \
-            SFRA_IQ_COLLECT((volatile int32 *)(in), (volatile int32 *)(fdb));   \
-        }                                                                       \
-    } while (0)
+    SFRA_IQ_COLLECT((volatile int32 *)(in), (volatile int32 *)(fdb))
 
 #else   /* SFRA_ENABLE == 0 */
 
