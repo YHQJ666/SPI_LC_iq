@@ -673,18 +673,11 @@ void main(void){
     for (;;)
     {
 #if (SFRA_ENABLE == 1)
-        // ---- 上位机通讯 + SFRA 后台状态机 ----
-        // 串口状态机每调一次只推进一步，而 SFRA_IQ_BACKGROUND 一次要算很久。
-        // 所以前后各多给几次机会，尽快把 FIFO 里的字节消化掉，避免丢字节后协议错位。
-        SerialHostComms();
-        SerialHostComms();
-        SerialHostComms();
-        SerialHostComms();
+        // ---- SFRA 后台状态机 ----
+        // 串口状态机不在主循环里跑：它已经搬进 20kHz 的 ADC 中断，
+        // 每 50us 服务一次，1 字节/173us 的到达速度下物理上不会丢字节。
+        // 主循环里只剩 SFRA_IQ_BACKGROUND（最重的一块），主循环慢也不会影响通讯。
         SFRA_IQ_BACKGROUND(&SFRA1);
-        SerialHostComms();
-        SerialHostComms();
-        SerialHostComms();
-        SerialHostComms();
 
         // GUI 点了 Start Sweep（或改了参数）：重新初始化并启动扫描
         if (initializationFlag == 1)
@@ -1088,6 +1081,7 @@ __interrupt void ADC_ISR(void)
 
 #if (SFRA_ENABLE == 1)
     Sfra_Tick();        // 20 个中断 = 1ms，给串口协议做超时
+    SerialHostComms();  // 串口状态机放中断里：每 50us 服务一次，不会丢字节
 #endif
 
     // ---- 8. 清中断标志 ----
