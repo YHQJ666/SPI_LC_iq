@@ -208,7 +208,7 @@ void GetCmdByte(void)		/* 状态1: 等命令字节 */
 		SerialCommsTimer = 0;
 		EchoCmdByte();
 	}
-	else if (SciaRegs.SCIRXST.bit.BRKDT == 1 || SerialCommsTimer > 20000)	/* 20s 空闲才复位 */
+	else if (SciaRegs.SCIRXST.bit.BRKDT == 1 || SerialCommsTimer > 30000)	/* 20s 空闲才复位 */
 	{
 		/* 检测到break或者长时间空闲, 复位SCI(某些USB转串口在仿真器RST后会卡住)
 		   原版是 2.5s。一次扫频要几十秒, 期间上位机可能几秒不发包,
@@ -246,7 +246,7 @@ void GetSizeByte(void)		/* 状态3: 等索引/长度字节 */
 		RcvTaskPointer = &EchoSizeByte;
 		EchoSizeByte();
 	}
-	else if (SerialCommsTimer > 1000)
+	else if (SerialCommsTimer > 30000)
 	{
 		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
@@ -273,7 +273,7 @@ void GetDataByte(void)		/* 状态5: 等数据字节 */
 		RcvTaskPointer = &EchoDataByte;
 		EchoDataByte();
 	}
-	else if (SerialCommsTimer > 500)
+	else if (SerialCommsTimer > 30000)
 	{
 		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
@@ -329,7 +329,7 @@ void CmdInterpreter(void)	/* 状态8: 解释并执行 */
 	   一次读 48 点数组要发 192 字节, 57600 下约 33ms, 这段时间收不到任何字节,
 	   SerialCommsTimer 会一直往上加. 原版在这里无条件超时退出, 上位机只收到
 	   半截数组, 就以为"长度未知", 最后在 CreateCSV 里按 161 点越界崩溃. */
-	if (SerialCommsTimer > 2500 && SendTaskPtr == 0)
+	if (SerialCommsTimer > 30000 && SendTaskPtr == 0)
 	{
 		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
