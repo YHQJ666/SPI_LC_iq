@@ -94,6 +94,14 @@ SECTIONS
                       LOAD_END(_RamfuncsLoadEnd),
                       RUN_START(_RamfuncsRunStart),
                       PAGE = 0
+   {
+       /* SFRA 后台状态机（DFT 运算）是主循环里唯一的重活，放 Flash 里跑太慢，
+          上位机轮询等不到回应就会判掉线（实测扫到第 19 点就断）。
+          搬进 RAM 和中断一起，main() 里那一次 memcpy 会一起搬过去。
+          点名库成员会无条件拉入，OLED 版（SFRA_ENABLE=0）也会多占约 489 字
+          Flash，但不会报未解析符号（上次那个报错是 _SFRA_INJ 宏，早已修好）。 */
+       --library=SFRA_IQ_Lib.lib<SFRA_IQ_BACKGROUND.obj>(.text)
+   }
 
    csmpasswds       : > CSM_PWL,         PAGE = 0
    csm_rsvd         : > CSM_RSVD,        PAGE = 0
