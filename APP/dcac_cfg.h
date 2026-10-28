@@ -62,6 +62,20 @@
 #define LOOP_MODE         LOOP_SINE_OPEN
 #endif
 
+// ---- 1b. 功能开关：SFRA 扫频版 / OLED 版 二选一 ----
+//   0 = OLED 版（现状）：OLED 显示 + 双通道示波器（RAM 运行）
+//   1 = SFRA 版：SFRA 扫频 + 上位机 SCI（必须配 28035_FLASH_lnk.cmd 从 Flash 运行）
+//   ★ 两者的 SCI/OLED 抢同一对引脚 GPIO28/29，且 SFRA 代码只有在 Flash 里才放得下
+//   ★ 切换方法：改这个 0/1，再到 CCS 工程属性里把链接脚本换成 28035_FLASH_lnk.cmd
+#ifndef SFRA_ENABLE
+#define SFRA_ENABLE       0
+#endif
+
+// Flash 运行标志：只有配 28035_FLASH_lnk.cmd 时才置 1，main() 里据此做 ramfuncs 搬移
+#ifndef SFRA_FLASH_BUILD
+#define SFRA_FLASH_BUILD  0
+#endif
+
 // ---- 2. 系统时钟 / 载波 / 采样率 ----
 // ePWM 增减计数：fsw = TBCLK / (2 * TBPRD)
 //   TBCLK = 60MHz, TBPRD = 1500 -> fsw = 20kHz

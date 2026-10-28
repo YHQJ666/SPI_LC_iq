@@ -243,6 +243,7 @@ volatile struct
 
 #endif
 
+#if (SFRA_ENABLE == 0)
 //===========================================================================
 // OLED 显示（0.96 寸 SSD1306，I2C 位带，SCL=GPIO29 / SDA=GPIO28）
 //
@@ -421,6 +422,8 @@ static void Oled_Task(void)
     OLED_ShowString(64U, 7U, (u8 *)"V");
 }
 
+#endif   /* SFRA_ENABLE == 0 : OLED 部分 */
+
 //===========================================================================
 // 主函数入口
 //===========================================================================
@@ -450,8 +453,10 @@ void main(void){
     Adc_ZeroCal();
     Adc_Config();
 
+#if (SFRA_ENABLE == 0)
     OLED_Init();
     OLED_Clear();
+#endif
 
     SPWM_Init();
     Gpio_Config();
@@ -557,11 +562,13 @@ void main(void){
         // OLED 刷新：每 Oled_Period_Isr 个中断（500ms）刷一屏。
         // 刷一屏要几十毫秒（I2C 位带），所以放在后台、不能刷太快。
         // 用中断计数做时基，不依赖 CPU 定时器
+#if (SFRA_ENABLE == 0)
         if ((Uint16)(IsrCnt - OledLastIsr) >= Oled_Period_Isr)
         {
             OledLastIsr = IsrCnt;
             Oled_Task();
         }
+#endif
 
 #if (Debug_Float_View == 1)
         // 后台：算有效值 -> 平滑 -> 刷新调试镜像

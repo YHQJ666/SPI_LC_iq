@@ -1,4 +1,7 @@
 #include "Oled.h"
+#include "dcac_cfg.h"          /* 只为拿到 SFRA_ENABLE，SFRA 版把整个文件编译掉 */
+
+#if (SFRA_ENABLE == 0)
 
 //初始化SSD1306
 void OLED_Init(void)
@@ -243,4 +246,4 @@ void OLED_ShowString(u8 x,u8 y,u8 *chr)
     }
 }
 
-
+#endif   /* SFRA_ENABLE == 0 */
