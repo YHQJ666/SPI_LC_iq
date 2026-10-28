@@ -222,7 +222,7 @@ void GetCmdByte(void)		/* 状态1: 等命令字节 */
 
 		SendTaskPtr = 0;
 		SerialCommsTimer = 0;
-		CommsOKflg = 0;
+		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
 	}
 }
@@ -248,7 +248,7 @@ void GetSizeByte(void)		/* 状态3: 等索引/长度字节 */
 	}
 	else if (SerialCommsTimer > 1000)
 	{
-		CommsOKflg = 0;
+		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
 		SerialCommsTimer = 0;
 	}
@@ -275,7 +275,7 @@ void GetDataByte(void)		/* 状态5: 等数据字节 */
 	}
 	else if (SerialCommsTimer > 500)
 	{
-		CommsOKflg = 0;
+		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
 		SerialCommsTimer = 0;
 	}
@@ -331,7 +331,7 @@ void CmdInterpreter(void)	/* 状态8: 解释并执行 */
 	   半截数组, 就以为"长度未知", 最后在 CreateCSV 里按 161 点越界崩溃. */
 	if (SerialCommsTimer > 2500 && SendTaskPtr == 0)
 	{
-		CommsOKflg = 0;
+		/* 只在状态机复位时不报断开: 偶发错位不该被上位机当成掉线 */
 		RcvTaskPointer = &GetCmdByte;
 		SerialCommsTimer = 0;
 	}
