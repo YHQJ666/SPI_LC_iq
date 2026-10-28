@@ -20,6 +20,14 @@
  *     这里把它写成 dataRAM1 的第一条，靠 origin 0x9000 天然对齐
  */
 
+/*
+ * SFRA_IQ 库（v1.20）。
+ * 放在链接脚本里而不是工程设置里，是为了不改 .cproject：
+ * 只有引用到 SFRA 符号时链接器才会从这个库里取目标文件，
+ * 所以同一套脚本配 OLED 模式也不会白占代码空间。
+ */
+-l "C:/ti/controlSUITE/libs/app_libs/SFRA/v1_20_00_00/IQ/lib/SFRA_IQ_Lib.lib"
+
 MEMORY
 {
 PAGE 0 :
@@ -51,7 +59,12 @@ PAGE 1 :
    RAMM1      : origin = 0x000400, length = 0x000400
 
    /* 数据区：L3，4K 字，起始 0x9000 是 64 字对齐的 */
-   dataRAM1   : origin = 0x009000, length = 0x001000
+   dataRAM1   : origin = 0x009000, length = 0x000C00
+
+   /* SFRA 库内部数据段单独一块：库要求 64 字对齐，
+      放独立区才能保证起点是 64 的整数倍（0x9C00 / 64 = 624）。
+      混在 dataRAM1 里跟着别的段走的话，实测会落到 0x93D8 这种地址上。 */
+   SFRA_DATA  : origin = 0x009C00, length = 0x000400
 }
 
 SECTIONS
@@ -84,8 +97,8 @@ SECTIONS
    .stack           : > RAMM0,           PAGE = 1
    .esysmem         : > RAMM1,           PAGE = 1
 
-   /* SFRA 库要求的段：必须是 dataRAM1 的第一条，靠 0x9000 天然 64 字对齐 */
-   SFRA_IQ_Data     : > dataRAM1,        PAGE = 1
+   /* SFRA 库要求的段：必须 64 字对齐，单独放 SFRA_DATA（0x9C00 起） */
+   SFRA_IQ_Data     : > SFRA_DATA,       PAGE = 1
 
    /* 示波器缓冲区：地址随本脚本走，Flash 版下和 RAM 版不同，用数组名访问 */
    scopeBufs        : > dataRAM1,        PAGE = 1

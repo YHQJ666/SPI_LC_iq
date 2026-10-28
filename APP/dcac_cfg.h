@@ -365,7 +365,16 @@
 // 0 = 全部关闭：硬件 Trip（COMP + Digital Compare）完全不配置，
 //     软件过流/过压判断也不执行，用来单独确认 SPWM 输出
 // 1 = 全部打开：整机运行时用
+//
+// ★ SFRA 扫频版强制打开（SFRA_ENABLE=1）：注入会让输出和电流带上扰动，
+//   保护关着的话注入幅值给大了会打坏东西。
+#ifndef Protect_Enable
+#if (SFRA_ENABLE == 1)
+#define Protect_Enable  1               // 扫频必须开保护
+#else
 #define Protect_Enable  0
+#endif
+#endif
 
 // ---- 8. 保护阈值与软启动 ----
 #define OV_Volts_F      45.0f           // 输出过压阈值 V（峰值）

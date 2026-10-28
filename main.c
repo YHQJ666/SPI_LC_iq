@@ -49,6 +49,7 @@
 #include "spwm.h"
 #include "protect.h"
 #include "Oled.h"                       // 0.96 寸 OLED（SSD1306，I2C 位带，GPIO28/29）
+#include "sfra_cfg.h"                   // SFRA 扫频（SFRA_ENABLE=1 时才有内容）
 
 // 函数原型声明
 void InitAdc(void);
@@ -425,6 +426,114 @@ static void Oled_Task(void)
 
 #endif   /* SFRA_ENABLE == 0 : OLED 部分 */
 
+#if (SFRA_ENABLE == 1)
+//===========================================================================
+// SFRA 扫频：库对象、结果数组、上位机映射表、SCI-A
+//   引脚：GPIO28 = SCIRXDA，GPIO29 = SCITXDA（和 OLED 是同一对脚，只能二选一）
+//   波特率 57600 @ LSPCLK 15MHz
+//===========================================================================
+SFRA_IQ  SFRA1;
+
+float32  FreqVect[SFRA_FREQ_LENGTH];
+int32    Plant_MagVect[SFRA_FREQ_LENGTH];
+int32    Plant_PhaseVect[SFRA_FREQ_LENGTH];
+int32    OL_MagVect[SFRA_FREQ_LENGTH];
+int32    OL_PhaseVect[SFRA_FREQ_LENGTH];
+
+// 上位机映射表：下标顺序由 SFRA GUI 写死，不能改
+int16   *varSetTxtList[16];
+int16   *varSetBtnList[16];
+int16   *varSetSldrList[16];
+int16   *varGetList[16];
+int32   *arrayGetList[16];
+int32   *dataGetList[16];
+Uint32  *dataSetList[16];
+
+int16    CommsOKflg       = 0;
+int16    SerialCommsTimer  = 0;   // 1ms 递增，串口超时用
+int16    initializationFlag = 0;  // GUI 点 Start 时置 1
+
+static Uint16 SfraTickCnt = 0U;
+
+static void SCIA_GPIO_Init(void)
+{
+    EALLOW;
+
+    GpioCtrlRegs.GPAPUD.bit.GPIO28  = 0;    // RX 开上拉，悬空不乱收噪声
+    GpioCtrlRegs.GPAPUD.bit.GPIO29  = 1;    // TX 输出，关上拉
+    GpioCtrlRegs.GPAMUX2.bit.GPIO28 = 1;    // SCIRXDA
+    GpioCtrlRegs.GPAMUX2.bit.GPIO29 = 1;    // SCITXDA
+    GpioCtrlRegs.GPAQSEL2.bit.GPIO28 = 3;   // 异步输入（串口必须）
+
+    EDIS;
+}
+
+void SFRA_Init(void)
+{
+    // 注入幅值（Q26，按信号自己的单位）：
+    //   固定占空比  -> 占空比 ±2%
+    //   电流给定    -> ±0.3A
+    //   电压给定    -> ±0.5V
+#if (LOOP_MODE == LOOP_FIXED_DUTY)
+    SFRA1.amplitude = _IQ26(0.02f);
+#elif (LOOP_MODE == LOOP_CURR_CLOSED)
+    SFRA1.amplitude = _IQ26(0.30f);
+#else
+    SFRA1.amplitude = _IQ26(0.50f);
+#endif
+
+    SFRA1.Vec_Length = SFRA_FREQ_LENGTH;
+    SFRA1.ISR_Freq   = SFRA_ISR_FREQ;
+    SFRA1.Freq_Start = SFRA_FREQ_START;
+    SFRA1.Freq_Step  = SFRA_FREQ_STEP;
+
+    SFRA1.FreqVect     = FreqVect;
+    SFRA1.GH_MagVect   = OL_MagVect;
+    SFRA1.GH_PhaseVect = OL_PhaseVect;
+    SFRA1.H_MagVect    = Plant_MagVect;
+    SFRA1.H_PhaseVect  = Plant_PhaseVect;
+
+    initializationFlag = 0;
+    SFRA_IQ_INIT(&SFRA1);
+
+    // GUI <-> 变量映射
+    varGetList[0] = (int16 *)&(SFRA1.Vec_Length);
+    varGetList[1] = (int16 *)&(SFRA1.status);
+    varGetList[2] = (int16 *)&(SFRA1.FreqIndex);
+
+    dataSetList[0] = (Uint32 *)&(SFRA1.Freq_Start);   // float32
+    dataSetList[1] = (Uint32 *)&(SFRA1.amplitude);    // int32 (Q26)
+    dataSetList[2] = (Uint32 *)&(SFRA1.Freq_Step);    // float32
+
+    varSetBtnList[0] = (int16 *)&initializationFlag;
+
+    arrayGetList[0] = (int32 *)FreqVect;
+    arrayGetList[1] = (int32 *)OL_MagVect;
+    arrayGetList[2] = (int32 *)OL_PhaseVect;
+    arrayGetList[3] = (int32 *)Plant_MagVect;
+    arrayGetList[4] = (int32 *)Plant_PhaseVect;
+    arrayGetList[5] = (int32 *)&(SFRA1.Freq_Start);
+    arrayGetList[6] = (int32 *)&(SFRA1.amplitude);
+    arrayGetList[7] = (int32 *)&(SFRA1.Freq_Step);
+
+    SCIA_GPIO_Init();
+    SCIA_Init(SFRA_SCI_LSPCLK, SFRA_SCI_BAUDRATE);
+}
+
+// 每个中断调一次：20 个中断 = 1ms，给串口协议做超时计数
+static void Sfra_Tick(void)
+{
+    if (++SfraTickCnt >= 20U)
+    {
+        SfraTickCnt = 0U;
+        if (SerialCommsTimer < 30000)
+        {
+            SerialCommsTimer++;
+        }
+    }
+}
+#endif   /* SFRA_ENABLE == 1 */
+
 //===========================================================================
 // 主函数入口
 //===========================================================================
@@ -470,6 +579,11 @@ void main(void){
 
     SPWM_Init();
     Gpio_Config();
+
+#if (SFRA_ENABLE == 1)
+    // SFRA + SCI 上位机（必须在中断使能前初始化，否则第一帧就可能丢字节）
+    SFRA_Init();
+#endif
 
 #if (Protect_Enable == 1)
     // 过流保护先建立，再开中断
@@ -536,6 +650,24 @@ void main(void){
     //=======================================================================
     for (;;)
     {
+#if (SFRA_ENABLE == 1)
+        // ---- 上位机通讯 + SFRA 后台状态机 ----
+        SerialHostComms();
+        SFRA_IQ_BACKGROUND(&SFRA1);
+
+        // GUI 点了 Start Sweep（或改了参数）：重新初始化并启动扫描
+        if (initializationFlag == 1)
+        {
+            SFRA_IQ_INIT(&SFRA1);
+            initializationFlag = 0;
+            SFRA1.start = 1;
+        }
+        else if (FaultLatch != FAULT_NONE)
+        {
+            SFRA1.start = 0;    // 保护动作就停扫，别把故障期的数据当结果
+        }
+#endif
+
         if (FaultLatch != FAULT_NONE)
         {
             // 故障：硬件封锁一次，输出留在中点
@@ -812,16 +944,39 @@ __interrupt void ADC_ISR(void)
         sin_val = sin_table[(Uint16)(PhaseAcc >> Phase_Acc_Bits)];
         Vref = _IQmpy(sin_val, RefRamp);
 
-#if (LOOP_MODE != LOOP_SINE_OPEN)
+#if (SFRA_ENABLE == 1)
+        // ---- SFRA 扫频版：参考冻结成直流（单相逆变器的正弦参考没有稳态工作点）----
+        if (Vref > SFRA_VREF_DC)  { Vref = SFRA_VREF_DC; }
+        if (Vref < -SFRA_VREF_DC) { Vref = -SFRA_VREF_DC; }
+#endif
+
+#if (LOOP_MODE == LOOP_FIXED_DUTY)
+        // ---- 固定占空比开环：只用于 SFRA 测受控体 ----
+        // 注入点 = 占空比(调制比)，采集点 = 电感电流
+        Mod  = SFRA_INJ(SFRA_DUTY_DC);
+        IRef = 0;
+        PR_V.X1 = 0; PR_V.X2 = 0;
+        PR_V.Y1 = 0; PR_V.Y2 = 0;
+        PI_I.Integral = 0;
+
+#elif (LOOP_MODE != LOOP_SINE_OPEN)
         // ---- 5. 电压外环 PR -> 电流给定 ----
+#if (SFRA_ENABLE == 1)
+        // 注入点在电压给定，采集点 = 输出电压（测电压环闭环增益）
+        PR_V.Ref = SFRA_INJ(SFRA_VREF_DC);
+#else
         PR_V.Ref = Vref;
+#endif
         PR_V.Fdb = Vout;
         IRef = PR_Calc(&PR_V);
 
-
-
         // ---- 6. 电流内环 PI -> 调制比 ----
+#if (SFRA_ENABLE == 1) && (LOOP_MODE == LOOP_CURR_CLOSED)
+        // 电流单环：注入点在电流给定，采集点 = 电感电流
+        PI_I.Ref = SFRA_INJ(SFRA_IREF_DC);
+#else
         PI_I.Ref = IRef;
+#endif
         PI_I.Fdb = IL;
         Mod = PI_Calc(&PI_I);
 #else
@@ -831,6 +986,16 @@ __interrupt void ADC_ISR(void)
         PR_V.X1 = 0; PR_V.X2 = 0;
         PR_V.Y1 = 0; PR_V.Y2 = 0;
         PI_I.Integral = 0;
+#endif
+
+#if (SFRA_ENABLE == 1)
+        // ---- 采集：输入是注入的那个量，输出是被控量 ----
+        // 每个中断只能调用一次 INJECT / 一次 COLLECT，与上面严格配对
+#if (LOOP_MODE == LOOP_FIXED_DUTY) || (LOOP_MODE == LOOP_CURR_CLOSED)
+        SFRA_COL(&Mod, &IL);
+#else
+        SFRA_COL(&PR_V.Ref, &Vout);
+#endif
 #endif
 
         // ---- 7. 限幅并写 CMPA ----
@@ -848,6 +1013,10 @@ __interrupt void ADC_ISR(void)
 #endif
 
     IsrCnt++;
+
+#if (SFRA_ENABLE == 1)
+    Sfra_Tick();        // 20 个中断 = 1ms，给串口协议做超时
+#endif
 
     // ---- 8. 清中断标志 ----
     // INT1CONT = 1（连续模式）时标志由硬件在响应中断时自动清掉，
