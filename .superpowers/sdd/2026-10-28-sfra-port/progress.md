@@ -27,3 +27,7 @@ Task 7: complete (SFRA_ENABLE=1 强制 Protect_Enable=1；SFRA_INJ/SFRA_COL 故�
 Task 4 fix: SFRA_IQ_Data 落在 0x93D8 不是 64 对齐 -> 单独划 SFRA_DATA(0x9C00) 后为 0x9C00，余 0。
 Task 8: 两套构建均 exit 0: OLED(RAM, ENABLE=0) 代码 0x15CD/0x1800 余 563 字; SFRA(Flash, ENABLE=1) FLASHA 0x1E76/0x1F80 余 266 字 + FLASHC 8192 备用。
 Task 8: 未完成的上板验证（需用户硬件）：OLED 8 行、示波器两通道、SFRA GUI 连接、扫 Plant。
+Review: 独立 reviewer 给出 3 Critical + 11 Important. 已修 C1(mode2 双次 INJECT -> 电流单环旁路电压环)、C2(冻结工作点改走 RefRamp 斜坡)、C3(COLLECT 第一参数改 IRef)、I4(#error 互锁)、I5(InitFlash 无条件调用)、I7(ALIGN(64))、I9(三张空表填哨兵)、I3(mode1 真正实现电压单环)。
+Review 遗留(未修): I2 mode2 轻载过压(已写进文档要求带载)、I6 .cproject 三配置(ruling:不改)、I8 20V 工作点实测达不到(PR 无直流增益)、I10 故障门是冗余(外层 if 已保证)、I11 故障后 GUI 无错误码。
+坑: 28035_RAM_lnk.cmd 被 PowerShell 写入搞成乱码+重复 MEMORY 块，已用 write 工具重建。链接命令里一度同时传了 RAM 和 FLASH 两个 cmd，已修 Debug/makefile。
+Task 8: 终验两套 exit 0. OLED(RAM) 0x15CF/0x1800 余 561; SFRA(Flash) FLASHA 0x1E48/0x1F80 余 312 + FLASHC 8K 备用; SFRA_IQ_Data=0x9C00 64 对齐。

@@ -79,6 +79,15 @@ SECTIONS
 
    codestart        : > BEGIN,           PAGE = 0
 
+   /* RAM 里跑的代码：
+        - ADC_ISR（#pragma CODE_SECTION(ADC_ISR,"ramfuncs")）
+        - InitFlash / DSP28x_usDelay 等 SysCtrl 里标了 ramfuncs 的函数
+      全部塞进同一个输出段，main() 里一次 memcpy 就覆盖全部。
+
+      注意：这里没有强行把 SFRA_IQ_INJECT/COLLECT 拉进来。
+      在链接脚本里点名库成员会「无条件拉入」，OLED 版（SFRA_ENABLE=0）
+      根本没引用它们，就会报 unresolved symbols。实测中断本身占了
+      绝大部分时间，SFRA 的注入/采集只有 ~100 字，留在 Flash 影响很小。 */
    ramfuncs         : LOAD = FLASHD,
                       RUN  = RAML0L1,
                       LOAD_START(_RamfuncsLoadStart),

@@ -805,6 +805,12 @@ void main(void){
 // ADC 中断服务函数：采样完成后执行完整控制环，20kHz
 //   整个中断里没有一次浮点运算，全部是 Q24 定点加减和 _IQmpy
 //===========================================================================
+#if (SFRA_FLASH_BUILD == 1)
+// Flash 版：20kHz 中断必须从 RAM 取指。Flash 有等待周期，
+// 中断跑在 Flash 里时 50us 预算会被吃掉，后台串口任务饿死 ->
+// SFRA GUI 一点 Start Sweep 就「连接丢失」。
+#pragma CODE_SECTION(ADC_ISR, "ramfuncs")
+#endif
 __interrupt void ADC_ISR(void)
 {
     _iq sin_val;
@@ -835,6 +841,7 @@ __interrupt void ADC_ISR(void)
     Vin = ADC_To_IQ_Cal(AdcResult.ADCRESULT4, ADC_Vin_Offset, 0L, ADC_Vin_Span);
     Iin = ADC_To_IQ_Cal(AdcResult.ADCRESULT5, ADC_Iin_Offset, 0L, ADC_Iin_Span);
 
+#if (SFRA_ENABLE == 0)
     // ---- 1b. 有效值 / 平均值累加 ----
     // 先右移 8 位（Q24 -> Q16）再平方，累加器用 long long，避免溢出
     {
@@ -890,6 +897,8 @@ __interrupt void ADC_ISR(void)
             }
         }
     }
+
+#endif   /* SFRA_ENABLE == 0 : RMS/示波器只在 OLED 版跑 */
 
 #if (Debug_Fixed_Mod_En == 1)
 

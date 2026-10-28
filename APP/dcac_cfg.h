@@ -59,7 +59,7 @@
 
 // 允许 build configuration 用 -dLOOP_MODE=n 覆盖（必须 #ifndef 包住，否则头文件赢）
 #ifndef LOOP_MODE
-#define LOOP_MODE         LOOP_SINE_OPEN
+#define LOOP_MODE         4
 #endif
 
 // ---- 1b. 功能开关：SFRA 扫频版 / OLED 版 二选一 ----
@@ -68,12 +68,12 @@
 //   ★ 两者的 SCI/OLED 抢同一对引脚 GPIO28/29，且 SFRA 代码只有在 Flash 里才放得下
 //   ★ 切换方法：改这个 0/1，再到 CCS 工程属性里把链接脚本换成 28035_FLASH_lnk.cmd
 #ifndef SFRA_ENABLE
-#define SFRA_ENABLE       0
+#define SFRA_ENABLE       1
 #endif
 
 // Flash 运行标志：只有配 28035_FLASH_lnk.cmd 时才置 1，main() 里据此做 ramfuncs 搬移
 #ifndef SFRA_FLASH_BUILD
-#define SFRA_FLASH_BUILD  0
+#define SFRA_FLASH_BUILD  1
 #endif
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----

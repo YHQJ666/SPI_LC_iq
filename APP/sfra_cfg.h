@@ -2,7 +2,9 @@
  * sfra_cfg.h
  *
  * SFRA 扫频（TI SFRA_IQ v1.20）的配置与对外声明。
- * 只有 SFRA_ENABLE == 1 时才参与编译。
+ *
+ * SFRA_ENABLE == 1 时才引入 SFRA 库；== 0 时只提供"什么都不做"的注入/采集宏，
+ * 这样 LOOP_MODE=1/2/3/4 这些分支在 OLED 版里也能正常编译运行。
  *
  * 频率范围为什么只有 48 点：
  *   采样/中断是 20kHz，SFRA 的有效上限大致到 fsw/10 = 2kHz。
@@ -63,7 +65,7 @@ extern void SerialHostComms(void);
 /* ---- 注入/采集的故障门 ----
  * 保护一动作就停止注入，否则扫出来的数据全是故障期的垃圾：
  *   SFRA_INJ : 正常时注入，故障时原样返回直流工作点（相位不前进，等于暂停）
- *   SFRA_COL : 正常时采集，故障时什么都不做（与 INJECT 严格配对，不采集就不注入）
+ *   SFRA_COL : 正常时采集，故障时什么都不做（与 INJECT 严格配对）
  */
 #define SFRA_INJ(dc)                                                            \
     ((FaultLatch == FAULT_NONE) ? (int32)SFRA_IQ_INJECT((int32)(dc)) : (int32)(dc))
@@ -75,6 +77,14 @@ extern void SerialHostComms(void);
         }                                                                       \
     } while (0)
 
-#endif   /* SFRA_ENABLE == 1 */
+#else   /* SFRA_ENABLE == 0 */
+
+/* 不扫频时：注入就是直接给直流工作点，采集什么都不做。
+   为什么必须有：LOOP_MODE=1/2/3/4 的分支在不扫频时也会编译到 SFRA_INJ，
+   宏不存在的话 C 会当成隐式函数调用，链接时报 _SFRA_INJ 未解析。 */
+#define SFRA_INJ(dc)        ((int32)(dc))
+#define SFRA_COL(in, fdb)   ((void)0)
+
+#endif   /* SFRA_ENABLE */
 
 #endif   /* SFRA_CFG_H */
