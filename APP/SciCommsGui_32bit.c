@@ -324,8 +324,12 @@ void CmdInterpreter(void)	/* 状态8: 解释并执行 */
 		}
 	}
 
-	/* 任务迟迟不结束也要退出, 防止卡死状态机 */
-	if (SerialCommsTimer > 2500)
+	/* 任务迟迟不结束也要退出, 防止卡死状态机.
+	   ★ 但正在发数据的途中绝不能打断 (SendTaskPtr != 0 表示还有字节没发完):
+	   一次读 48 点数组要发 192 字节, 57600 下约 33ms, 这段时间收不到任何字节,
+	   SerialCommsTimer 会一直往上加. 原版在这里无条件超时退出, 上位机只收到
+	   半截数组, 就以为"长度未知", 最后在 CreateCSV 里按 161 点越界崩溃. */
+	if (SerialCommsTimer > 2500 && SendTaskPtr == 0)
 	{
 		CommsOKflg = 0;
 		RcvTaskPointer = &GetCmdByte;
