@@ -71,9 +71,21 @@
 #define SFRA_ENABLE       1
 #endif
 
-// Flash 运行标志：只有配 28035_FLASH_lnk.cmd 时才置 1，main() 里据此做 ramfuncs 搬移
+// ---- 上位机 SFRA GUI（SCI-A 通讯）开关 ----
+//   0 = 不接上位机：不初始化 SCI-A、不建映射表、中断里不服务协议。
+//       扫频改为在 CCS Expressions 里给 SfraTrig 写 1 触发；扫完 SfraDone=1，
+//       直接读 FreqVect / Plant_MagVect / Plant_PhaseVect / OL_* 导走即可。
+//       好处：不需要串口硬件，也不再受 GUI 耐心(~60s)限制，想扫多少点都行。
+//   1 = 恢复原来的 SFRA GUI 串口协议（和以前一样用 GUI 扫频）。
+#ifndef SFRA_GUI_ENABLE
+#define SFRA_GUI_ENABLE   0
+#endif
+
+// 运行模式标志：
+//   0 = 配 28035_RAM_lnk.cmd（纯 RAM 运行，现在用这个；不掉电就不用重下）
+//   1 = 配 28035_FLASH_lnk.cmd（Flash 运行，main() 里要先把 ramfuncs 搬到 RAM）
 #ifndef SFRA_FLASH_BUILD
-#define SFRA_FLASH_BUILD  1
+#define SFRA_FLASH_BUILD  0
 #endif
 
 // ---- 2. 系统时钟 / 载波 / 采样率 ----

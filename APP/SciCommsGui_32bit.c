@@ -1,7 +1,7 @@
 /* 本文件整体只在 SFRA 扫频版编译；OLED 版下是一个空文件 */
 #include "dcac_cfg.h"
 
-#if (SFRA_ENABLE == 1)
+#if (SFRA_ENABLE == 1) && (SFRA_GUI_ENABLE == 1)
 /* ==============================================================================
 //  FILE:   SciCommsGui_32bit.c
 //
@@ -573,4 +573,4 @@ void SendData(void)
 	}
 }
 
-#endif   /* SFRA_ENABLE == 1 */
+#endif   /* SFRA_ENABLE == 1 && SFRA_GUI_ENABLE == 1 */
